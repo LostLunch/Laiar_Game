@@ -1,0 +1,4 @@
+#AI
+gemini==1.0.0
+#web framework
+Flask==2.2.3
