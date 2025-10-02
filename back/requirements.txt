@@ -1,4 +1,7 @@
 #AI
-gemini==1.0.0
+openai==0.27.8
 #web framework
 Flask==2.2.3
+Flask-Cors==3.0.10
+
+python-dotenv

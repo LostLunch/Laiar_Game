@@ -3,34 +3,58 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>AI 자동 응답 채팅</title>
-    <!-- Tailwind CSS CDN 로드: 복잡한 CSS 없이 클래스 이름만으로 UI를 빠르게 디자인할 수 있게 해주는 라이브러리입니다. -->
+    <title>실시간 채팅</title>
+    <!-- Tailwind CSS CDN 로드 -->
     <script src="https://cdn.tailwindcss.com"></script>
     <style>
-        /* 기본 폰트 설정: Inter 폰트를 사용해 가독성을 높입니다. */
-        body {
-            font-family: 'Inter', sans-serif;
+        body { font-family: 'Inter', sans-serif; overflow-x: hidden; }
+        #chat-messages::-webkit-scrollbar { width: 8px; }
+        #chat-messages::-webkit-scrollbar-track { background: #f1f1f1; border-radius: 10px; }
+        #chat-messages::-webkit-scrollbar-thumb { background: #888; border-radius: 10px; }
+        #chat-messages::-webkit-scrollbar-thumb:hover { background: #555; }
+        #rolling-cat-container {
+            position: fixed;
+            bottom: 10px;
+            left: 0;
+            z-index: 1000;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            animation: rollAcross 20s linear infinite;
         }
-        /* 스크롤바 디자인: 채팅 메시지 영역의 스크롤바를 예쁘게 꾸밉니다. */
-        #chat-messages::-webkit-scrollbar { width: 8px; } /* 스크롤바 너비 */
-        #chat-messages::-webkit-scrollbar-track { background: #f1f1f1; border-radius: 10px; } /* 스크롤바 배경 */
-        #chat-messages::-webkit-scrollbar-thumb { background: #888; border-radius: 10px; } /* 스크롤바 막대 */
-        #chat-messages::-webkit-scrollbar-thumb:hover { background: #555; } /* 마우스 올렸을 때 색상 */
+        #cat-emoji { 
+            font-size: 40px;
+            /* [추가] 이미지로 부드럽게 전환되기 위해 크기 설정 */
+            width: 48px;
+            height: 48px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        #cat-name {
+            background-color: rgba(0, 0, 0, 0.7);
+            color: white;
+            padding: 2px 8px;
+            border-radius: 10px;
+            font-size: 12px;
+            margin-bottom: 5px;
+            white-space: nowrap;
+        }
+        @keyframes rollAcross {
+            0% { transform: translateX(-100px) rotate(0deg); }
+            100% { transform: translateX(100vw) rotate(1800deg); }
+        }
     </style>
 </head>
 <body class="bg-gray-100 dark:bg-gray-900 flex items-center justify-center min-h-screen">
-    <!-- 전체 앱 컨테이너 -->
     <div class="w-full max-w-2xl mx-auto p-4 sm:p-6 lg:p-8">
-        <!-- 채팅창 UI 카드 -->
         <div class="bg-white dark:bg-gray-800 rounded-2xl shadow-lg p-6 flex flex-col h-[80vh] max-h-[700px]">
 
-            <!-- 방 입장/생성 화면: 앱을 처음 켰을 때 보이는 화면입니다. -->
+            <!-- 방 선택 화면 -->
             <div id="room-selection" class="flex flex-col items-center justify-center h-full">
-                <h1 class="text-3xl font-bold text-gray-900 dark:text-white mb-4">AI 자동 응답 채팅</h1>
-                <p class="text-gray-600 dark:text-gray-400 mb-8 text-center">모든 대화에 AI가 참여하여 응답합니다.</p>
-                
+                <h1 class="text-3xl font-bold text-gray-900 dark:text-white mb-4">실시간 채팅</h1>
+                <p class="text-gray-600 dark:text-gray-400 mb-8 text-center">친구와 대화를 시작해보세요.</p>
                 <div class="w-full max-w-sm flex flex-col items-center gap-4">
-                    <!-- 기존 방 참여 섹션 -->
                     <div class="w-full">
                         <label for="room-id-input" class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2 text-center">기존 방 참여하기</label>
                         <div class="flex gap-2">
@@ -38,46 +62,51 @@
                             <button id="join-existing-room-btn" class="px-6 py-3 bg-blue-600 text-white font-semibold rounded-lg shadow-md hover:bg-blue-700 disabled:bg-gray-400" disabled>참여</button>
                         </div>
                     </div>
-                    <!-- '또는' 구분선 -->
                     <div class="my-2 flex items-center w-full"><hr class="w-full border-gray-300 dark:border-gray-600"><span class="px-4 text-gray-500">또는</span><hr class="w-full border-gray-300 dark:border-gray-600"></div>
-                    <!-- 새로운 방 생성 버튼 -->
                     <button id="create-new-room-btn" class="w-full px-6 py-3 bg-green-600 text-white font-semibold rounded-lg shadow-md hover:bg-green-700 disabled:bg-gray-400" disabled>새로운 방 만들기</button>
                 </div>
                  <p id="auth-status" class="mt-8 text-sm text-gray-500 dark:text-gray-400">인증 중...</p>
             </div>
 
-            <!-- 채팅방 화면: 방에 입장했을 때 보이며, 초기에는 숨겨져 있습니다. -->
+            <!-- 대화 주제 선택 화면 -->
+            <div id="topic-selection" class="hidden flex-col items-center justify-center h-full">
+                <h1 class="text-2xl font-bold text-gray-900 dark:text-white mb-6">대화 주제가 결정되었습니다</h1>
+                <div id="random-topic-display" class="mb-8 text-lg text-center text-gray-700 dark:text-gray-300 bg-gray-100 dark:bg-gray-700 px-6 py-3 rounded-lg">
+                    <!-- JavaScript에 의해 주제가 채워집니다 -->
+                </div>
+                <button id="start-chat-btn" class="w-full max-w-xs px-6 py-3 bg-indigo-600 text-white font-semibold rounded-lg shadow-md hover:bg-indigo-700">시작하기</button>
+            </div>
+
+            <!-- 채팅방 화면 -->
             <div id="chat-room" class="hidden flex-1 flex-col min-h-0">
-                <!-- 채팅방 헤더: 방 정보 표시 및 나가기 버튼 -->
                 <div class="mb-4">
                      <div class="flex justify-between items-center">
                         <h1 class="text-2xl font-bold text-gray-900 dark:text-white">채팅방</h1>
-                        <div>
-                            <button id="leave-room-btn" class="text-sm text-red-500 hover:underline">나가기</button>
-                        </div>
+                        <button id="leave-room-btn" class="text-sm text-red-500 hover:underline">나가기</button>
                      </div>
                     <p class="text-sm text-gray-500 dark:text-gray-400 break-all">방 ID: <span id="room-id-display" class="font-mono"></span></p>
                     <p class="text-sm text-gray-500 dark:text-gray-400 break-all">내 ID: <span id="user-id-display" class="font-mono"></span></p>
+                    <div id="participants-status" class="text-xs text-gray-500 dark:text-gray-400 mt-2 h-4"></div>
                 </div>
-                <!-- 채팅 메시지가 표시될 영역 -->
                 <div id="chat-messages" class="flex-1 overflow-y-auto bg-gray-50 dark:bg-gray-900 p-4 rounded-lg mb-4 border border-gray-200 dark:border-gray-700"></div>
-                <!-- 메시지 입력 폼 -->
                 <form id="message-form" class="flex items-center gap-3">
                     <input id="message-input" type="text" placeholder="메시지를 입력하세요..." autocomplete="off" class="flex-1 p-3 bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded-lg"/>
-                    <button type="submit" class="px-6 py-3 bg-blue-600 text-white font-semibold rounded-lg shadow-md hover:bg-blue-700">전송</button>
+                    <button id="send-btn" type="submit" class="px-6 py-3 bg-blue-600 text-white font-semibold rounded-lg shadow-md hover:bg-blue-700">전송</button>
                 </form>
             </div>
         </div>
     </div>
-
-    <!-- JavaScript 코드 시작. type="module"은 import/export 문법을 사용하기 위해 필요합니다. -->
+    
+    <div id="rolling-cat-container">
+        <div id="cat-name"></div>
+        <div id="cat-emoji">🐈</div>
+    </div>
+    
     <script type="module">
-        // Firebase 라이브러리에서 필요한 함수들을 가져옵니다.
-        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js"; // Firebase 앱 초기화
-        import { getAuth, signInAnonymously, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js"; // 사용자 인증 관련
-        import { getFirestore, collection, addDoc, query, onSnapshot, serverTimestamp, doc, getDoc, setDoc } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js"; // 데이터베이스(Firestore) 관련
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+        import { getAuth, signInAnonymously, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getFirestore, collection, addDoc, query, onSnapshot, serverTimestamp, doc, getDoc, setDoc, updateDoc, arrayUnion, arrayRemove, runTransaction, writeBatch } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 
-        // Firebase 프로젝트 설정 값: Firebase 콘솔에서 복사한 고유 키 값들입니다.
         const firebaseConfig = {
             apiKey: "AIzaSyDMgGwmlV9T8l0CPsMrJ8H0NrTTUNtSDMo",
             authDomain: "text-861c1.firebaseapp.com",
@@ -87,11 +116,8 @@
             appId: "1:521608830043:web:5df3d118d76ca4562eb37e",
         };
         
-        // 통신할 Python AI 서버의 주소입니다. server.py 파일이 실행되고 있는 주소와 같아야 합니다.
-        const AI_SERVER_URL = 'http://127.0.0.1:5000/chat';
-
-        // HTML 문서의 각 요소를 JavaScript에서 제어하기 위해 변수에 할당합니다.
         const roomSelection = document.getElementById('room-selection');
+        const topicSelection = document.getElementById('topic-selection');
         const chatRoom = document.getElementById('chat-room');
         const roomIdInput = document.getElementById('room-id-input');
         const joinExistingRoomBtn = document.getElementById('join-existing-room-btn');
@@ -102,26 +128,20 @@
         const chatMessages = document.getElementById('chat-messages');
         const messageForm = document.getElementById('message-form');
         const messageInput = document.getElementById('message-input');
+        const sendBtn = document.getElementById('send-btn');
         const authStatus = document.getElementById('auth-status');
+        const participantsStatus = document.getElementById('participants-status');
+        const randomTopicDisplay = document.getElementById('random-topic-display');
+        const startChatBtn = document.getElementById('start-chat-btn');
         
-        // Firebase 앱을 초기화합니다.
         const app = initializeApp(firebaseConfig);
-        // Firebase 인증 서비스를 초기화합니다.
         const auth = getAuth(app);
-        // Firestore 데이터베이스 서비스를 초기화합니다.
         const db = getFirestore(app);
 
-        // 스크립트 전역에서 사용할 변수들을 선언합니다.
-        let currentUser = null; // 현재 로그인된 사용자 정보를 저장할 변수
-        let currentRoomId = null; // 현재 입장한 방의 ID를 저장할 변수
-        let unsubscribeMessages = null; // 실시간 메시지 수신을 중단할 때 사용할 함수
-
-        /**
-         * 화면 우측 상단에 알림 메시지를 잠시 보여주는 함수
-         * @param {string} message - 표시할 메시지 내용
-         * @param {string} type - 알림 종류 ('success' 또는 'error')
-         * @param {number} duration - 알림이 표시될 시간 (밀리초 단위)
-         */
+        let currentUser = null, currentRoomId = null;
+        let unsubscribeMessages = null, unsubscribeTurnStatus = null;
+        let selectedTopic = null;
+        
         function showNotification(message, type = 'error', duration = 3000) {
             const notification = document.createElement('div');
             const bgColor = type === 'success' ? 'bg-green-500' : 'bg-red-500';
@@ -131,185 +151,265 @@
             setTimeout(() => { notification.remove(); }, duration);
         }
 
-        // 사용자의 로그인 상태가 변경될 때마다 자동으로 호출되는 함수입니다.
         onAuthStateChanged(auth, user => {
-            if (user) { // 사용자가 로그인되어 있다면
-                currentUser = user; // 사용자 정보를 전역 변수에 저장
-                userIdDisplay.textContent = currentUser.uid; // 화면에 사용자 ID 표시
-                [roomIdInput, joinExistingRoomBtn, createNewRoomBtn].forEach(el => el.disabled = false); // 버튼 활성화
-                authStatus.textContent = '인증 완료'; // 인증 상태 텍스트 변경
+            if (user) { 
+                currentUser = user; 
+                userIdDisplay.textContent = currentUser.uid.substring(0,8); 
+                [roomIdInput, joinExistingRoomBtn, createNewRoomBtn].forEach(el => el.disabled = false);
+                authStatus.textContent = '인증 완료'; 
                 authStatus.classList.add('text-green-500');
-            } else { // 로그인되어 있지 않다면
-                // 별도 회원가입 없이 익명으로 로그인 처리합니다.
+            } else { 
                 signInAnonymously(auth).catch(err => showNotification("익명 인증 실패: " + err.message));
             }
         });
+        
+        const lockUI = () => {
+            messageInput.disabled = true;
+            sendBtn.disabled = true;
+            sendBtn.textContent = '대기 중...';
+        };
+        const unlockUI = () => {
+            messageInput.disabled = false;
+            sendBtn.disabled = false;
+            sendBtn.textContent = '전송';
+        };
 
-        /**
-         * 채팅방에 입장하는 함수
-         * @param {string} roomId - 입장할 방의 ID
-         */
-        function enterChatRoom(roomId) {
-            currentRoomId = roomId; // 현재 방 ID를 전역 변수에 저장
-            roomIdDisplay.textContent = currentRoomId; // 화면에 방 ID 표시
-            roomSelection.classList.add('hidden'); // 방 선택 화면 숨기기
-            chatRoom.classList.remove('hidden'); // 채팅방 화면 보이기
+        async function enterChatRoom(roomId) {
+            currentRoomId = roomId; 
+            roomIdDisplay.textContent = currentRoomId; 
+            topicSelection.classList.add('hidden');
+            roomSelection.classList.add('hidden'); 
+            chatRoom.classList.remove('hidden'); 
             chatRoom.classList.add('flex');
-            loadMessages(currentRoomId); // 해당 방의 메시지 불러오기 시작
+            
+            const turnStatusRef = doc(db, `chat_rooms/${roomId}/turn_status`, 'current');
+            try {
+                await updateDoc(turnStatusRef, { participants: arrayUnion(currentUser.uid) });
+            } catch (error) {
+                if (error.code === 'not-found') {
+                    await setDoc(turnStatusRef, { participants: [currentUser.uid], submissions: {} });
+                }
+            }
+            
+            listenToTurnStatus(roomId);
+            loadMessages(roomId); 
         }
 
-        // '참여' 버튼 클릭 이벤트 처리
+        function showTopicSelectionScreen() {
+            const topics = ["일상 대화", "영화 이야기", "음식 추천"];
+            selectedTopic = topics[Math.floor(Math.random() * topics.length)];
+            randomTopicDisplay.innerHTML = `주제: ${selectedTopic} <span class="text-red-500 font-bold ml-2">(라이어)</span>`;
+            
+            roomSelection.classList.add('hidden');
+            topicSelection.classList.remove('hidden');
+            topicSelection.classList.add('flex');
+        }
+
         joinExistingRoomBtn.addEventListener('click', async () => {
-            const roomId = roomIdInput.value.trim(); // 입력된 방 ID 가져오기
+            const roomId = roomIdInput.value.trim(); 
             if (!roomId) return showNotification("방 ID를 입력해주세요.");
-            // Firestore에서 해당 방 ID가 실제로 존재하는지 확인
             const docSnap = await getDoc(doc(db, 'chat_rooms', roomId));
-            if (docSnap.exists()) { // 방이 존재하면
-                enterChatRoom(roomId); // 채팅방으로 입장
-            } else { // 방이 존재하지 않으면
+            if (docSnap.exists()) {
+                currentRoomId = roomId;
+                showTopicSelectionScreen();
+            } else { 
                 showNotification("방을 찾을 수 없습니다.");
             }
         });
 
-        // '새로운 방 만들기' 버튼 클릭 이벤트 처리
         createNewRoomBtn.addEventListener('click', async () => {
-            // 무작위 6자리 문자열로 새로운 방 ID 생성
             const newRoomId = Math.random().toString(36).substring(2, 8);
-            // Firestore에 새로운 방 정보 생성
             await setDoc(doc(db, 'chat_rooms', newRoomId), { createdAt: serverTimestamp() });
-            enterChatRoom(newRoomId); // 생성된 방으로 즉시 입장
+            currentRoomId = newRoomId;
+            showTopicSelectionScreen();
+        });
+        
+        startChatBtn.addEventListener('click', async () => {
+            if (!selectedTopic || !currentRoomId) return;
+
+            enterChatRoom(currentRoomId);
+            const messagesColPath = `chat_rooms/${currentRoomId}/messages`;
+            await addDoc(collection(db, messagesColPath), {
+                text: `"${selectedTopic}" 주제로 대화를 시작합니다.`,
+                senderId: 'system',
+                timestamp: serverTimestamp()
+            });
         });
 
-        // '나가기' 버튼 클릭 이벤트 처리
-        leaveRoomBtn.addEventListener('click', () => {
-            if (unsubscribeMessages) unsubscribeMessages(); // 메시지 실시간 수신 중단
-            currentRoomId = null; // 현재 방 ID 정보 초기화
-            chatMessages.innerHTML = ''; // 채팅 메시지 비우기
-            chatRoom.classList.add('hidden'); // 채팅방 화면 숨기기
-            roomSelection.classList.remove('hidden'); // 방 선택 화면 보이기
-            roomIdInput.value = '';
+        leaveRoomBtn.addEventListener('click', async () => {
+            if (unsubscribeMessages) unsubscribeMessages();
+            if (unsubscribeTurnStatus) unsubscribeTurnStatus();
+
+            if (currentRoomId && currentUser) {
+                const turnStatusRef = doc(db, `chat_rooms/${currentRoomId}/turn_status`, 'current');
+                await updateDoc(turnStatusRef, { participants: arrayRemove(currentUser.uid) });
+            }
+
+            currentRoomId = null; 
+            chatMessages.innerHTML = ''; 
+            participantsStatus.textContent = '';
+            chatRoom.classList.add('hidden'); 
+            topicSelection.classList.add('hidden');
+            roomSelection.classList.remove('hidden'); 
+            unlockUI();
         });
 
-        /**
-         * 특정 방의 메시지를 실시간으로 불러오는 함수
-         * @param {string} roomId - 메시지를 불러올 방의 ID
-         */
         function loadMessages(roomId) {
-            // 해당 방의 messages 컬렉션 경로 설정
             const q = query(collection(db, `chat_rooms/${roomId}/messages`));
-            // onSnapshot: 해당 경로의 데이터가 변경될 때마다 자동으로 호출됨 (실시간 기능의 핵심)
             unsubscribeMessages = onSnapshot(q, snapshot => {
-                // 모든 메시지 문서를 가져와 배열로 변환
                 let messages = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-                // 메시지를 시간순으로 정렬
                 messages.sort((a, b) => (a.timestamp?.seconds || 0) - (b.timestamp?.seconds || 0));
-                renderMessages(messages); // 화면에 메시지 렌더링
+                renderMessages(messages); 
             });
         }
-
-        /**
-         * 메시지 배열을 받아 화면에 그려주는 함수
-         * @param {Array} messages - 화면에 표시할 메시지 객체 배열
-         */
-        function renderMessages(messages) {
-            chatMessages.innerHTML = ''; // 기존 메시지 모두 지우기
-            messages.forEach(msg => {
-                const isMe = msg.senderId === currentUser.uid; // 내가 보낸 메시지인지 확인
-                const isAI = msg.senderId === 'ai-bot'; // AI가 보낸 메시지인지 확인
+        
+        function listenToTurnStatus(roomId) {
+            const turnStatusRef = doc(db, `chat_rooms/${roomId}/turn_status`, 'current');
+            unsubscribeTurnStatus = onSnapshot(turnStatusRef, (docSnap) => {
+                if (!docSnap.exists()) return;
                 
-                const wrapper = document.createElement('div');
-                wrapper.className = `flex ${isMe ? 'justify-end' : 'justify-start'} mb-3`;
-                
-                const container = document.createElement('div');
+                const turnData = docSnap.data();
+                const submissions = turnData.submissions || {};
+                const participants = turnData.participants || [];
 
-                // 내가 보낸 메시지가 아닐 경우 보낸 사람 이름 표시
-                if (!isMe) {
-                    const senderName = document.createElement('p');
-                    senderName.className = 'text-xs text-gray-500 dark:text-gray-400 mb-1 ml-3';
-                    senderName.textContent = isAI ? (msg.senderName || 'AI 챗봇') : `User-${msg.senderId.substring(0, 4)}`;
-                    container.appendChild(senderName);
+                participantsStatus.textContent = `제출 현황: ${Object.keys(submissions).length} / ${participants.length}`;
+
+                if (submissions[currentUser.uid]) {
+                    lockUI();
+                } else {
+                    unlockUI();
                 }
-
-                // 말풍선 생성
-                const bubble = document.createElement('div');
-                let bubbleClasses = 'max-w-md lg:max-w-lg px-4 py-3 rounded-2xl ';
-                if (isMe) bubbleClasses += 'bg-blue-600 text-white'; // 내 메시지 스타일
-                else if (isAI) bubbleClasses += 'bg-purple-600 text-white'; // AI 메시지 스타일
-                else bubbleClasses += 'bg-gray-200 dark:bg-gray-700 text-gray-800 dark:text-gray-200'; // 다른 사람 메시지 스타일
-                bubble.className = bubbleClasses;
-
-                const textP = document.createElement('p');
-                textP.className = 'text-md break-words';
-                textP.textContent = msg.text;
-                
-                bubble.appendChild(textP);
-                container.appendChild(bubble);
-                wrapper.appendChild(container);
-                chatMessages.appendChild(wrapper);
             });
-            // 새 메시지가 오면 스크롤을 맨 아래로 이동
+        }
+        
+        function renderSingleBubble(msgData, isRound = false) {
+             const isMe = msgData.senderId === currentUser.uid;
+             const wrapper = document.createElement('div');
+             wrapper.className = `flex ${isMe ? 'justify-end' : 'justify-start'} ${isRound ? 'my-1' : 'mb-3'}`;
+             const container = document.createElement('div');
+             if (!isMe) {
+                 const senderName = document.createElement('p');
+                 senderName.className = 'text-xs text-gray-500 dark:text-gray-400 mb-1 ml-3';
+                 senderName.textContent = `User-${msgData.senderId.substring(0, 4)}`;
+                 container.appendChild(senderName);
+             }
+             const bubble = document.createElement('div');
+             let bubbleClasses = 'max-w-md lg:max-w-lg px-4 py-3 rounded-2xl ';
+             bubble.className = bubbleClasses + (isMe ? 'bg-blue-600 text-white' : 'bg-gray-200 dark:bg-gray-700 text-gray-800 dark:text-gray-200');
+             bubble.textContent = msgData.text;
+             container.appendChild(bubble);
+             wrapper.appendChild(container);
+             return wrapper;
+        }
+
+        function renderMessages(messages) {
+            chatMessages.innerHTML = ''; 
+            messages.forEach(msg => {
+                if (msg.senderId === 'system') {
+                    const wrapper = document.createElement('div');
+                    wrapper.className = 'flex justify-center my-3';
+                    const textDiv = document.createElement('div');
+                    textDiv.className = 'text-xs text-gray-500 dark:text-gray-400 bg-gray-100 dark:bg-gray-700 px-3 py-1 rounded-full';
+                    textDiv.textContent = msg.text;
+                    wrapper.appendChild(textDiv);
+                    chatMessages.appendChild(wrapper);
+                } else if (msg.type === 'round' && msg.roundData) {
+                    const roundWrapper = document.createElement('div');
+                    roundWrapper.className = 'border-l-2 border-gray-300 dark:border-gray-600 pl-3 my-4 py-2';
+                    msg.roundData.forEach(roundMsg => {
+                        roundWrapper.appendChild(renderSingleBubble(roundMsg, true));
+                    });
+                    chatMessages.appendChild(roundWrapper);
+                } else {
+                     chatMessages.appendChild(renderSingleBubble(msg));
+                }
+            });
             chatMessages.scrollTop = chatMessages.scrollHeight;
         }
         
-        /**
-         * Python AI 서버와 통신하여 응답을 받아오는 함수 (핵심 기능)
-         * @param {string} userMessage - AI에게 보낼 사용자 메시지
-         * @param {string} roomPath - AI 응답을 저장할 Firestore 경로
-         */
-        async function getAIResponse(userMessage, roomPath) {
-            try {
-                // fetch API를 사용해 AI 서버에 POST 방식으로 데이터를 보냅니다.
-                const response = await fetch(AI_SERVER_URL, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' }, // 보내는 데이터가 JSON임을 명시
-                    body: JSON.stringify({ message: userMessage }) // JavaScript 객체를 JSON 문자열로 변환하여 전송
-                });
-
-                // 서버로부터 응답이 성공적으로 오지 않았다면 에러를 발생시킵니다.
-                if (!response.ok) {
-                    throw new Error(`AI 서버 오류: ${response.status}`);
-                }
-                // 응답 데이터를 JSON 형태로 변환합니다.
-                const data = await response.json();
-                
-                // AI의 응답을 받아 Firebase 채팅방에 새로운 메시지로 추가합니다.
-                await addDoc(collection(db, roomPath), {
-                    text: data.response, // AI가 생성한 응답 텍스트
-                    senderId: 'ai-bot', // 보낸 사람을 'ai-bot'으로 지정
-                    senderName: 'AI 챗봇',
-                    timestamp: serverTimestamp() // 서버 시간 기준으로 타임스탬프 기록
-                });
-            } catch (error) {
-                // AI 서버와 통신 중 오류가 발생하면 콘솔에 로그를 남깁니다.
-                console.error("AI 응답 실패:", error);
-            }
-        }
-        
-        // 메시지 전송 폼 제출 이벤트 처리
         messageForm.addEventListener('submit', async (e) => {
-            e.preventDefault(); // 폼 제출 시 페이지가 새로고침되는 기본 동작을 막습니다.
-            const messageText = messageInput.value.trim(); // 입력된 메시지 가져오기
-            if (!messageText || !currentUser || !currentRoomId) return; // 내용이 없거나, 로그인이 안 됐거나, 방에 없으면 무시
+            e.preventDefault(); 
+            const messageText = messageInput.value.trim(); 
+            if (!messageText) return;
+            lockUI();
 
-            const messagesColPath = `chat_rooms/${currentRoomId}/messages`;
+            const turnStatusRef = doc(db, `chat_rooms/${currentRoomId}/turn_status`, 'current');
+
             try {
-                // 1. 사용자 메시지를 Firestore에 전송합니다.
-                await addDoc(collection(db, messagesColPath), {
-                    text: messageText,
-                    senderId: currentUser.uid,
-                    timestamp: serverTimestamp()
+                let roundCompletedByThisAction = false;
+
+                await runTransaction(db, async (transaction) => {
+                    const turnDoc = await transaction.get(turnStatusRef);
+                    if (!turnDoc.exists()) throw "Turn document does not exist.";
+
+                    const turnData = turnDoc.data();
+                    const submissions = turnData.submissions || {};
+                    const participants = turnData.participants || [];
+
+                    if (submissions[currentUser.uid]) return; 
+
+                    const newSubmissions = { ...submissions, [currentUser.uid]: messageText };
+                    const allSubmitted = participants.every(p => newSubmissions[p]);
+
+                    if (allSubmitted && participants.length > 0) {
+                        const roundMessages = participants.map(pId => ({ senderId: pId, text: newSubmissions[pId] }));
+                        const newMsgRef = doc(collection(db, `chat_rooms/${currentRoomId}/messages`));
+                        
+                        transaction.set(newMsgRef, {
+                            type: 'round',
+                            roundData: roundMessages,
+                            timestamp: serverTimestamp()
+                        });
+                        transaction.update(turnStatusRef, { submissions: {} });
+                        
+                        roundCompletedByThisAction = true;
+
+                    } else {
+                        transaction.update(turnStatusRef, { submissions: newSubmissions });
+                    }
                 });
-                messageInput.value = ''; // 입력창 비우기
                 
-                // 2. AI 응답을 요청합니다. (이 함수는 백그라운드에서 실행되며, 완료를 기다리지 않습니다.)
-                getAIResponse(messageText, messagesColPath);
+                messageInput.value = '';
+
+                if (roundCompletedByThisAction) {
+                    unlockUI();
+                }
 
             } catch (error) {
-                console.error("메시지 전송 오류: ", error);
-                showNotification("메시지 전송에 실패했습니다.");
+                console.error("메시지 제출 트랜잭션 오류: ", error);
+                showNotification("메시지 제출에 실패했습니다.");
+                unlockUI();
             }
         });
+        
+        // --- [수정] 확률적으로 고양이 모습 바꾸기 기능 ---
+        const catEmojiElement = document.getElementById('cat-emoji');
+        // [수정] 업로드된 이미지를 Base64 데이터 URL로 변환하여 변수에 저장합니다.
+        const specialCatImageUrl = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAEAAAABACAYAAACqaXHeAAAAAXNSR0IArs4c6QAAAARnQU1BAACxjwv8YQUAAAAJcEhZcwAAEnQAABJ0Ad5mH3gAAAUoSURBVHhe7VtdiFVVFL7v2+lu1VOzBjPMMsPSChIiiCBEsiiyoKIvCl0oF6GuhUIXgghZFgU9iIgiA9EDpdFFL0UXQW9EEARdKEPYDBKkZ5Znpudk+5x7Du/M2b177z1z9jrnwz8+955zfp9zZ87ce885gP+nEaE0IZQmBNmE0L1YhNCkI5QmBNmE0IZQm3BCaEKoTQhNCK3b9GkQghC+ZgihS0M0J9S2QmiD0DQhNCeEMgStEELrhNCG0Lq2CeH5IQQhNCeE2oRQE6E/QmhC+LgQmvB/DkL//xGhtCEAixAaFrRACG0IgRCaFkIQ+hAaF95fEIIQEIIQIX+FEKGEEEIIO/gqhBCChBAhhBDyP1aE0A9DCEKEEEKkEMJEiP5NCM2TUIQQqoS+b8I8CEEIdQn9N+F5IQQhtCW0bhuE0H8hhCB0CU3D8I4QhC7B9+UhhC6FaUIoTRBC6ED4g+A3QgghdOENJIT6NwhBuCF+EELvQmhDtA6aELoTWhOEc0LoIghBCH0LzRAaLwSBkBBChBCChBC6EKqEEELrRAjNCaENQTehH4TGE4QQ+lG4Bf1iA6GEEHpHCKE9IdQhdCdUCCE0ZwhdaDwhdBe0TQj9IBQhhBC6EKoTQm1CuAl9ILwEIdQndC8mEEIIpQmhJkL3YhdC/1+BEEI3Qm1CeCGEEEIIofcMhNCb0A+hG0JnQmk6aEIIIYReL0I/hDaE2oReEMpGCCA0TQjVCH0f6kJ4hRBC6AWhG4TGEyGEEMITQoh+IYSwhhBCEELvWwh9CM0QRQjVCOEN4ReFEILQnaAThDaEegidCSGEEGoThNC88B6E0AQhBCGEGkJoTohGhNCGkJkQ+iHEaRBCv8bK0P+9CEEIMYQQQohQQghBCH3/4J8IoQuhH0LrhNAsEKGEEELrE0JoQ/gjhC6FNoReEJoQ+kEIIYReEELoTaggdCe0RgghhDaE7oTwhRBC6EIIIfQnhNCG0BWhYUKoQwhB6EKIGkJrQmhDtA6EEEJnQj9Ebwj9EIQQQmhC6ET4x34BfLwQeucn9L+JEEKIGkIIIYQQQk2EEMITwvc/CCHk4EEIIYRehRBC6EH4d3whhLCE/jfw6EEIIYQQwveL/QQIoQkhQghBuCFCCCEIIYQQQgiBWBBCEIIQPnwhhJATQk2EEELrRAghhNCb0JoQmhBCEMIIpQmhCYFGEEIIQeghhLCEEGIIQQhdCP+fA0JrhRBCCH0Q/l8LhBCaEIIIIdQhdCM0Rwh9CF0JpQmBH0IIIfSjUIII/RehCaEThRBCaED4/x4IoQkhQgi1CaEToR/Ck4MQghBCaEJ4Twh9EMIQohOEEEIIQeha4D/WEIIIIdQhNCE0QwiNEULoTPhPGEIIofVCCCE0QxAhdCG0RgghhNAtEIII/QmhCaE74XlCCEEKIdQgNB+EEEJvhNCG0IXwdwgCofWCEEII3QnhF4TGE4RGEEI3QgghVCN8DUIoTRBCaEIQ2oEQQohQjRBCaIboRCghdCM8ryGEEEIpoUmhCaFNoQnB/RBC6EH4o1BCaEIIIbQmNCE0TQj9EIIQWhNCGUL7hRBCaEIIoRWhjRBCX4ReEIQQmtA/IYTGE0JnQm1CCEGIIAThhNCG0BoRQsOAECGE0AQhBKEToV+hDSEToXWhfSEMIUSNEEIIrReaEHpBCKE7oR8aBCH0o7+EECGEEIQQohGEEEIIpQkCEEIITQihCaEVQm1CaEDoG5/vX/30V5qgAAAAAElFTkSuQmCC";
+        let isSpecialCatVisible = false; // 특별한 고양이가 보이는 중인지 추적하는 변수
+
+        // [추가] 타이핑 시 0.1% 확률로 고양이 모습 바꾸기
+        messageInput.addEventListener('input', () => {
+            // 0.1% 확률(0.001)이고, 특별한 고양이가 아직 안보일 때
+            if (Math.random() < 0.001 && !isSpecialCatVisible) {
+                isSpecialCatVisible = true;
+                
+                // 특별한 고양이 이미지로 변경
+                catEmojiElement.innerHTML = `<img src="${specialCatImageUrl}" alt="special cat" class="w-12 h-12">`;
+
+                // 5초 후에 다시 원래 이모지로 되돌림
+                setTimeout(() => {
+                    catEmojiElement.innerHTML = '🐈';
+                    isSpecialCatVisible = false;
+                }, 5000); // 5초
+            }
+        });
+
+        const catNameElement = document.getElementById('cat-name');
+        const names = ["이*혁", "고*건", "송*훈", "최*준", "한*상", "박*원", "이*수", "이*영", "트라라라라라라"];
+        const randomName = names[Math.floor(Math.random() * names.length)];
+        catNameElement.textContent = randomName;
+        
     </script>
 </body>
 </html>
-
