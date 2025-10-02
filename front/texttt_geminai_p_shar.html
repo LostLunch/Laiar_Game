@@ -68,30 +68,35 @@
                  <p id="auth-status" class="mt-8 text-sm text-gray-500 dark:text-gray-400">인증 중...</p>
             </div>
 
-            <!-- 대화 주제 선택 화면 -->
-            <div id="topic-selection" class="hidden flex-col items-center justify-center h-full">
-                <h1 class="text-2xl font-bold text-gray-900 dark:text-white mb-6">대화 주제가 결정되었습니다</h1>
-                <div id="random-topic-display" class="mb-8 text-lg text-center text-gray-700 dark:text-gray-300 bg-gray-100 dark:bg-gray-700 px-6 py-3 rounded-lg">
-                    <!-- JavaScript에 의해 주제가 채워집니다 -->
-                </div>
-                <button id="start-chat-btn" class="w-full max-w-xs px-6 py-3 bg-indigo-600 text-white font-semibold rounded-lg shadow-md hover:bg-indigo-700">시작하기</button>
-            </div>
 
             <!-- 채팅방 화면 -->
             <div id="chat-room" class="hidden flex-1 flex-col min-h-0">
                 <div class="mb-4">
                      <div class="flex justify-between items-center">
-                        <h1 class="text-2xl font-bold text-gray-900 dark:text-white">채팅방</h1>
+                        <h1 class="text-2xl font-bold text-gray-900 dark:text-white">사람 찾기 게임</h1>
                         <button id="leave-room-btn" class="text-sm text-red-500 hover:underline">나가기</button>
                      </div>
                     <p class="text-sm text-gray-500 dark:text-gray-400 break-all">방 ID: <span id="room-id-display" class="font-mono"></span></p>
-                    <p class="text-sm text-gray-500 dark:text-gray-400 break-all">내 ID: <span id="user-id-display" class="font-mono"></span></p>
-                    <div id="participants-status" class="text-xs text-gray-500 dark:text-gray-400 mt-2 h-4"></div>
+                    <div id="role-display" class="text-sm font-semibold mt-2"></div>
+                    <div id="game-word-display" class="hidden mb-3 p-3 bg-yellow-100 dark:bg-yellow-900 border border-yellow-300 dark:border-yellow-600 rounded-lg">
+                        <div class="text-sm font-semibold text-yellow-800 dark:text-yellow-200 mb-1">제시어</div>
+                        <div id="current-word" class="text-lg font-bold text-yellow-900 dark:text-yellow-100"></div>
+                    </div>
+                    <div id="game-status" class="text-sm text-gray-600 dark:text-gray-400 mt-2">
+                        5명의 용의자 중 1명은 진짜 사람입니다. 누가 진짜 사람인지 찾아보세요!
+                    </div>
+                    <div id="participants-info" class="text-xs text-gray-500 dark:text-gray-400 mt-2"></div>
                 </div>
                 <div id="chat-messages" class="flex-1 overflow-y-auto bg-gray-50 dark:bg-gray-900 p-4 rounded-lg mb-4 border border-gray-200 dark:border-gray-700"></div>
+                <div id="operator-input" class="hidden mb-3">
+                    <form id="operator-form" class="flex items-center gap-3">
+                        <input id="operator-message-input" type="text" placeholder="운영자로서 답변을 입력하세요..." autocomplete="off" class="flex-1 p-3 bg-yellow-50 dark:bg-yellow-900 border border-yellow-300 dark:border-yellow-600 rounded-lg"/>
+                        <button id="operator-send-btn" type="submit" class="px-6 py-3 bg-yellow-600 text-white font-semibold rounded-lg shadow-md hover:bg-yellow-700">전송</button>
+                    </form>
+                </div>
                 <form id="message-form" class="flex items-center gap-3">
-                    <input id="message-input" type="text" placeholder="메시지를 입력하세요..." autocomplete="off" class="flex-1 p-3 bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded-lg"/>
-                    <button id="send-btn" type="submit" class="px-6 py-3 bg-blue-600 text-white font-semibold rounded-lg shadow-md hover:bg-blue-700">전송</button>
+                    <input id="message-input" type="text" placeholder="질문을 입력하세요..." autocomplete="off" class="flex-1 p-3 bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded-lg"/>
+                    <button id="send-btn" type="submit" class="px-6 py-3 bg-blue-600 text-white font-semibold rounded-lg shadow-md hover:bg-blue-700">질문</button>
                 </form>
             </div>
         </div>
@@ -105,7 +110,7 @@
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
         import { getAuth, signInAnonymously, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
-        import { getFirestore, collection, addDoc, query, onSnapshot, serverTimestamp, doc, getDoc, setDoc, updateDoc, arrayUnion, arrayRemove, runTransaction, writeBatch } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+        import { getFirestore, collection, addDoc, query, onSnapshot, serverTimestamp, doc, getDoc, setDoc, updateDoc, arrayUnion, arrayRemove, runTransaction, writeBatch, orderBy, limit, getDocs, deleteDoc } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 
         const firebaseConfig = {
             apiKey: "AIzaSyDMgGwmlV9T8l0CPsMrJ8H0NrTTUNtSDMo",
@@ -117,30 +122,40 @@
         };
         
         const roomSelection = document.getElementById('room-selection');
-        const topicSelection = document.getElementById('topic-selection');
         const chatRoom = document.getElementById('chat-room');
         const roomIdInput = document.getElementById('room-id-input');
         const joinExistingRoomBtn = document.getElementById('join-existing-room-btn');
         const createNewRoomBtn = document.getElementById('create-new-room-btn');
         const leaveRoomBtn = document.getElementById('leave-room-btn');
         const roomIdDisplay = document.getElementById('room-id-display');
-        const userIdDisplay = document.getElementById('user-id-display');
         const chatMessages = document.getElementById('chat-messages');
         const messageForm = document.getElementById('message-form');
         const messageInput = document.getElementById('message-input');
         const sendBtn = document.getElementById('send-btn');
         const authStatus = document.getElementById('auth-status');
-        const participantsStatus = document.getElementById('participants-status');
-        const randomTopicDisplay = document.getElementById('random-topic-display');
-        const startChatBtn = document.getElementById('start-chat-btn');
+        const gameStatus = document.getElementById('game-status');
+        const roleDisplay = document.getElementById('role-display');
+        const participantsInfo = document.getElementById('participants-info');
+        const operatorInput = document.getElementById('operator-input');
+        const operatorForm = document.getElementById('operator-form');
+        const operatorMessageInput = document.getElementById('operator-message-input');
+        const operatorSendBtn = document.getElementById('operator-send-btn');
+        const gameWordDisplay = document.getElementById('game-word-display');
+        const currentWord = document.getElementById('current-word');
         
         const app = initializeApp(firebaseConfig);
         const auth = getAuth(app);
         const db = getFirestore(app);
 
         let currentUser = null, currentRoomId = null;
-        let unsubscribeMessages = null, unsubscribeTurnStatus = null;
-        let selectedTopic = null;
+        let unsubscribeMessages = null;
+        let currentGameWord = null;
+        let gamePhase = 'statement1';
+        let isOperator = false; // 방 생성자인지 여부
+        let isGameStarted = false;
+        let suspectNames = []; // 용의자 이름 배열
+        let operatorSuspectIndex = -1; // 운영자가 몇 번 용의자인지
+        let waitingForOperatorResponse = false;
         
         function showNotification(message, type = 'error', duration = 3000) {
             const notification = document.createElement('div');
@@ -154,64 +169,108 @@
         onAuthStateChanged(auth, user => {
             if (user) { 
                 currentUser = user; 
-                userIdDisplay.textContent = currentUser.uid.substring(0,8); 
                 [roomIdInput, joinExistingRoomBtn, createNewRoomBtn].forEach(el => el.disabled = false);
-                authStatus.textContent = '인증 완료'; 
+                authStatus.textContent = '인증 완룼'; 
                 authStatus.classList.add('text-green-500');
+                console.log('인증 완료, 버튼 활성화 완료');
             } else { 
                 signInAnonymously(auth).catch(err => showNotification("익명 인증 실패: " + err.message));
             }
         });
         
-        const lockUI = () => {
-            messageInput.disabled = true;
-            sendBtn.disabled = true;
-            sendBtn.textContent = '대기 중...';
-        };
-        const unlockUI = () => {
-            messageInput.disabled = false;
-            sendBtn.disabled = false;
-            sendBtn.textContent = '전송';
-        };
 
-        async function enterChatRoom(roomId) {
+        function generateSuspectNames() {
+            // 용의자 이름을 랜덤으로 섬기
+            suspectNames = ['용의자 1', '용의자 2', '용의자 3', '용의자 4', '용의자 5'];
+            // 배열을 랜덤으로 섬기
+            for (let i = suspectNames.length - 1; i > 0; i--) {
+                const j = Math.floor(Math.random() * (i + 1));
+                [suspectNames[i], suspectNames[j]] = [suspectNames[j], suspectNames[i]];
+            }
+            // 운영자가 몇 번 용의자인지 저장 (0~4 인덱스)
+            operatorSuspectIndex = Math.floor(Math.random() * 5);
+        }
+
+        async function enterChatRoom(roomId, asOperator = false) {
             currentRoomId = roomId; 
+            isOperator = asOperator;
             roomIdDisplay.textContent = currentRoomId; 
-            topicSelection.classList.add('hidden');
             roomSelection.classList.add('hidden'); 
             chatRoom.classList.remove('hidden'); 
             chatRoom.classList.add('flex');
             
-            const turnStatusRef = doc(db, `chat_rooms/${roomId}/turn_status`, 'current');
-            try {
-                await updateDoc(turnStatusRef, { participants: arrayUnion(currentUser.uid) });
-            } catch (error) {
-                if (error.code === 'not-found') {
-                    await setDoc(turnStatusRef, { participants: [currentUser.uid], submissions: {} });
+            // 용의자 이름 생성
+            generateSuspectNames();
+            
+            // 역할 표시
+            if (isOperator) {
+                roleDisplay.textContent = '당신은 운영자입니다';
+                roleDisplay.className = 'text-sm font-semibold mt-2 text-yellow-600 dark:text-yellow-400';
+                operatorInput.classList.remove('hidden');
+                participantsInfo.textContent = '사용자가 입장하기를 기다리는 중...';
+            } else {
+                roleDisplay.textContent = '당신은 체험자입니다';
+                roleDisplay.className = 'text-sm font-semibold mt-2 text-blue-600 dark:text-blue-400';
+                participantsInfo.textContent = `운영자는 ${suspectNames[operatorSuspectIndex]}입니다. (비밀)`;
+            }
+            
+            // 게임 시작 메시지 추가 및 제시어 설정
+            if (asOperator) {
+                // 제시어 가져오기
+                try {
+                    const wordResult = await callLiarGameAPI('/api/start_dec');
+                    if (wordResult && wordResult.word) {
+                        currentGameWord = wordResult.word;
+                        currentWord.textContent = currentGameWord;
+                        gameWordDisplay.classList.remove('hidden');
+                        
+                        // 방에 제시어 저장
+                        await updateDoc(doc(db, 'chat_rooms', roomId), {
+                            currentWord: currentGameWord
+                        });
+                        
+                        await addDoc(collection(db, `chat_rooms/${roomId}/messages`), {
+                            text: `사람 찾기 게임에 오신 것을 환영합니다! 제시어는 "${currentGameWord}"입니다. 5명의 용의자 중 1명은 진짜 사람입니다.`,
+                            senderId: 'system',
+                            timestamp: serverTimestamp()
+                        });
+                    } else {
+                        await addDoc(collection(db, `chat_rooms/${roomId}/messages`), {
+                            text: '사람 찾기 게임에 오신 것을 환영합니다! 5명의 용의자 중 1명은 진짜 사람입니다.',
+                            senderId: 'system',
+                            timestamp: serverTimestamp()
+                        });
+                    }
+                } catch (error) {
+                    console.error('제시어 가져오기 실패:', error);
+                    await addDoc(collection(db, `chat_rooms/${roomId}/messages`), {
+                        text: '사람 찾기 게임에 오신 것을 환영합니다! 5명의 용의자 중 1명은 진짜 사람입니다.',
+                        senderId: 'system',
+                        timestamp: serverTimestamp()
+                    });
+                }
+            } else {
+                // 참가자도 제시어 표시
+                // 방에 저장된 제시어 가져오기 시도
+                const roomDoc = await getDoc(doc(db, 'chat_rooms', roomId));
+                if (roomDoc.exists() && roomDoc.data().currentWord) {
+                    currentGameWord = roomDoc.data().currentWord;
+                    currentWord.textContent = currentGameWord;
+                    gameWordDisplay.classList.remove('hidden');
                 }
             }
             
-            listenToTurnStatus(roomId);
             loadMessages(roomId); 
         }
 
-        function showTopicSelectionScreen() {
-            const topics = ["일상 대화", "영화 이야기", "음식 추천"];
-            selectedTopic = topics[Math.floor(Math.random() * topics.length)];
-            randomTopicDisplay.innerHTML = `주제: ${selectedTopic} <span class="text-red-500 font-bold ml-2">(라이어)</span>`;
-            
-            roomSelection.classList.add('hidden');
-            topicSelection.classList.remove('hidden');
-            topicSelection.classList.add('flex');
-        }
 
         joinExistingRoomBtn.addEventListener('click', async () => {
             const roomId = roomIdInput.value.trim(); 
             if (!roomId) return showNotification("방 ID를 입력해주세요.");
             const docSnap = await getDoc(doc(db, 'chat_rooms', roomId));
             if (docSnap.exists()) {
-                currentRoomId = roomId;
-                showTopicSelectionScreen();
+                // 참가자로 입장 (체험자)
+                enterChatRoom(roomId, false);
             } else { 
                 showNotification("방을 찾을 수 없습니다.");
             }
@@ -219,22 +278,134 @@
 
         createNewRoomBtn.addEventListener('click', async () => {
             const newRoomId = Math.random().toString(36).substring(2, 8);
-            await setDoc(doc(db, 'chat_rooms', newRoomId), { createdAt: serverTimestamp() });
-            currentRoomId = newRoomId;
-            showTopicSelectionScreen();
+            await setDoc(doc(db, 'chat_rooms', newRoomId), { 
+                createdAt: serverTimestamp(),
+                operatorId: currentUser.uid,
+                currentWord: null // 제시어는 나중에 설정
+            });
+            // 운영자로 입장
+            enterChatRoom(newRoomId, true);
         });
         
-        startChatBtn.addEventListener('click', async () => {
-            if (!selectedTopic || !currentRoomId) return;
-
-            enterChatRoom(currentRoomId);
-            const messagesColPath = `chat_rooms/${currentRoomId}/messages`;
-            await addDoc(collection(db, messagesColPath), {
-                text: `"${selectedTopic}" 주제로 대화를 시작합니다.`,
-                senderId: 'system',
-                timestamp: serverTimestamp()
-            });
-        });
+        // API 호출 함수
+        async function callLiarGameAPI(endpoint, data = {}) {
+            try {
+                console.log(`API 호출 시도: ${endpoint}`, data);
+                const response = await fetch(`http://127.0.0.1:5000${endpoint}`, {
+                    method: 'PATCH',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify(data)
+                });
+                
+                console.log('API 응답 상태:', response.status);
+                
+                if (!response.ok) {
+                    throw new Error(`HTTP error! status: ${response.status}`);
+                }
+                
+                const result = await response.json();
+                console.log('API 응답 데이터:', result);
+                return result;
+            } catch (error) {
+                console.error('API 호출 오류:', error);
+                showNotification(`API 호출 오류: ${error.message}. 백엔드 서버(http://127.0.0.1:5000)가 실행 중인지 확인하세요.`);
+                return null;
+            }
+        }
+        
+        async function processGameTurn(userQuestion) {
+            try {
+                if (!isGameStarted) {
+                    // 처음 게임 시작
+                    isGameStarted = true;
+                    await addDoc(collection(db, `chat_rooms/${currentRoomId}/messages`), {
+                        text: '게임이 시작되었습니다! 운영자의 답변을 기다리는 중...',
+                        senderId: 'system',
+                        timestamp: serverTimestamp()
+                    });
+                }
+                
+                // 운영자에게 답변 요청
+                if (isOperator) {
+                    // 운영자는 답변 입력 창 활성화
+                    waitingForOperatorResponse = true;
+                    operatorMessageInput.placeholder = `"용의자 ${operatorSuspectIndex + 1}"로서 답변하세요: ${userQuestion}`;
+                    showNotification('운영자로서 답변을 입력해주세요.', 'info');
+                } else {
+                    // 체험자는 운영자 답변을 기다림
+                    showNotification('운영자의 답변을 기다리는 중...', 'info');
+                }
+                
+                // AI 응답 생성
+                let result;
+                let phaseTitle;
+                
+                if (gamePhase === 'statement1' || gamePhase === 'statement2') {
+                    result = await callLiarGameAPI('/api/start_dec');
+                    phaseTitle = gamePhase === 'statement1' ? '1차 진술 단계' : '2차 진술 단계';
+                    if (result) {
+                        currentGameWord = result.word;
+                        gamePhase = gamePhase === 'statement1' ? 'discussion1' : 'discussion2';
+                    }
+                } else if (gamePhase === 'discussion1' || gamePhase === 'discussion2') {
+                    result = await callLiarGameAPI('/api/start_disc', { word: currentGameWord });
+                    phaseTitle = gamePhase === 'discussion1' ? '1차 토론 단계' : '2차 토론 단계';
+                    if (result) {
+                        if (gamePhase === 'discussion1') {
+                            gamePhase = 'statement2';
+                        } else {
+                            gamePhase = 'vote';
+                        }
+                    }
+                }
+                
+                // 운영자 답변을 기다리지 않고 AI 응답만 먼저 저장
+                if (result) {
+                    const aiResponses = result.declaration_messages || result.discussion_messages;
+                    
+                    // AI 응답들을 용의자 인덱스와 매핑
+                    const responses = [];
+                    
+                    // AI 4명의 응답 추가 (운영자 인덱스 제외)
+                    let aiIndex = 0;
+                    for (let i = 0; i < 5; i++) {
+                        if (i === operatorSuspectIndex) {
+                            // 운영자 자리는 비워두고 나중에 추가
+                            responses.push({ 
+                                text: '답변 대기 중...', 
+                                isOperator: true, 
+                                suspectIndex: i 
+                            });
+                        } else {
+                            responses.push({ 
+                                text: aiResponses[aiIndex], 
+                                isOperator: false, 
+                                suspectIndex: i 
+                            });
+                            aiIndex++;
+                        }
+                    }
+                    
+                    // 임시 저장 (운영자 답변 대기 중)
+                    await addDoc(collection(db, `chat_rooms/${currentRoomId}/temp_responses`), {
+                        responses: responses,
+                        phaseTitle: phaseTitle,
+                        questionId: Date.now(), // 질문 ID
+                        timestamp: serverTimestamp()
+                    });
+                }
+                
+            } catch (error) {
+                console.error('게임 처리 오류:', error);
+                await addDoc(collection(db, `chat_rooms/${currentRoomId}/messages`), {
+                    text: `게임 처리 중 오류가 발생했습니다: ${error.message}`,
+                    senderId: 'system',
+                    timestamp: serverTimestamp()
+                });
+            }
+        }
 
         leaveRoomBtn.addEventListener('click', async () => {
             if (unsubscribeMessages) unsubscribeMessages();
@@ -247,11 +418,14 @@
 
             currentRoomId = null; 
             chatMessages.innerHTML = ''; 
-            participantsStatus.textContent = '';
             chatRoom.classList.add('hidden'); 
-            topicSelection.classList.add('hidden');
             roomSelection.classList.remove('hidden'); 
-            unlockUI();
+            messageInput.disabled = false;
+            sendBtn.disabled = false;
+            sendBtn.textContent = '전송';
+            gamePhase = 'statement1';
+            gameRound = 1;
+            isGameStarted = false;
         });
 
         function loadMessages(roomId) {
@@ -263,39 +437,59 @@
             });
         }
         
-        function listenToTurnStatus(roomId) {
-            const turnStatusRef = doc(db, `chat_rooms/${roomId}/turn_status`, 'current');
-            unsubscribeTurnStatus = onSnapshot(turnStatusRef, (docSnap) => {
-                if (!docSnap.exists()) return;
-                
-                const turnData = docSnap.data();
-                const submissions = turnData.submissions || {};
-                const participants = turnData.participants || [];
-
-                participantsStatus.textContent = `제출 현황: ${Object.keys(submissions).length} / ${participants.length}`;
-
-                if (submissions[currentUser.uid]) {
-                    lockUI();
-                } else {
-                    unlockUI();
-                }
-            });
+        function updateGameStatus() {
+            const phaseNames = {
+                'statement1': '1차 진술',
+                'discussion1': '1차 토론', 
+                'statement2': '2차 진술',
+                'discussion2': '2차 토론',
+                'vote': '투표'
+            };
+            
+            if (!isGameStarted) {
+                gameStatus.textContent = '게임이 곧 시작됩니다. 메시지를 입력하면 AI들과 함께 라이어 게임이 시작됩니다!';
+            } else {
+                gameStatus.textContent = `현재 단계: ${phaseNames[gamePhase] || gamePhase} | 제시어: ${currentGameWord || '대기 중'}`;
+            }
         }
         
-        function renderSingleBubble(msgData, isRound = false) {
+        
+        function renderSingleBubble(msgData, suspectIndex = -1) {
              const isMe = msgData.senderId === currentUser.uid;
+             const isOperatorMessage = msgData.senderId === 'operator';
              const wrapper = document.createElement('div');
-             wrapper.className = `flex ${isMe ? 'justify-end' : 'justify-start'} ${isRound ? 'my-1' : 'mb-3'}`;
+             wrapper.className = `flex ${isMe ? 'justify-end' : 'justify-start'} mb-3`;
              const container = document.createElement('div');
-             if (!isMe) {
+             
+             // 이름 표시
+             if (!isMe && msgData.senderId !== 'system') {
                  const senderName = document.createElement('p');
                  senderName.className = 'text-xs text-gray-500 dark:text-gray-400 mb-1 ml-3';
-                 senderName.textContent = `User-${msgData.senderId.substring(0, 4)}`;
+                 
+                 if (isOperatorMessage && suspectIndex >= 0) {
+                     // 운영자 메시지를 용의자 이름으로 표시
+                     senderName.textContent = suspectNames[suspectIndex] || `용의자 ${suspectIndex + 1}`;
+                 } else if (suspectIndex >= 0) {
+                     // AI 메시지를 용의자 이름으로 표시
+                     senderName.textContent = suspectNames[suspectIndex] || `용의자 ${suspectIndex + 1}`;
+                 } else {
+                     senderName.textContent = `사용자`;
+                 }
                  container.appendChild(senderName);
              }
+             
              const bubble = document.createElement('div');
              let bubbleClasses = 'max-w-md lg:max-w-lg px-4 py-3 rounded-2xl ';
-             bubble.className = bubbleClasses + (isMe ? 'bg-blue-600 text-white' : 'bg-gray-200 dark:bg-gray-700 text-gray-800 dark:text-gray-200');
+             
+             if (isMe) {
+                 bubble.className = bubbleClasses + 'bg-blue-600 text-white';
+             } else if (isOperatorMessage || suspectIndex >= 0) {
+                 // 용의자들 (운영자 + AI)
+                 bubble.className = bubbleClasses + 'bg-purple-100 dark:bg-purple-800 text-purple-800 dark:text-purple-200 border border-purple-300 dark:border-purple-600';
+             } else {
+                 bubble.className = bubbleClasses + 'bg-gray-200 dark:bg-gray-700 text-gray-800 dark:text-gray-200';
+             }
+             
              bubble.textContent = msgData.text;
              container.appendChild(bubble);
              wrapper.appendChild(container);
@@ -313,11 +507,22 @@
                     textDiv.textContent = msg.text;
                     wrapper.appendChild(textDiv);
                     chatMessages.appendChild(wrapper);
-                } else if (msg.type === 'round' && msg.roundData) {
+                } else if (msg.type === 'all_responses' && msg.responses) {
+                    // 모든 응답들을 그룹으로 표시
                     const roundWrapper = document.createElement('div');
-                    roundWrapper.className = 'border-l-2 border-gray-300 dark:border-gray-600 pl-3 my-4 py-2';
-                    msg.roundData.forEach(roundMsg => {
-                        roundWrapper.appendChild(renderSingleBubble(roundMsg, true));
+                    roundWrapper.className = 'border-l-4 border-purple-400 pl-4 my-4 py-2 bg-purple-50 dark:bg-purple-900 rounded-r-lg';
+                    
+                    const phaseTitle = document.createElement('div');
+                    phaseTitle.className = 'text-sm font-semibold text-purple-700 dark:text-purple-300 mb-2';
+                    phaseTitle.textContent = msg.phaseTitle || '용의자들의 답변';
+                    roundWrapper.appendChild(phaseTitle);
+                    
+                    msg.responses.forEach((response, index) => {
+                        const responseMsg = { 
+                            text: response.text, 
+                            senderId: response.isOperator ? 'operator' : 'ai'
+                        };
+                        roundWrapper.appendChild(renderSingleBubble(responseMsg, response.suspectIndex));
                     });
                     chatMessages.appendChild(roundWrapper);
                 } else {
@@ -325,60 +530,110 @@
                 }
             });
             chatMessages.scrollTop = chatMessages.scrollHeight;
+            updateGameStatus();
         }
         
+        // 사용자 질문 전송
         messageForm.addEventListener('submit', async (e) => {
             e.preventDefault(); 
             const messageText = messageInput.value.trim(); 
             if (!messageText) return;
-            lockUI();
-
-            const turnStatusRef = doc(db, `chat_rooms/${currentRoomId}/turn_status`, 'current');
-
+            
+            // 운영자는 질문을 할 수 없음
+            if (isOperator) {
+                showNotification('운영자는 질문을 할 수 없습니다.');
+                return;
+            }
+            
+            // UI 잠금
+            messageInput.disabled = true;
+            sendBtn.disabled = true;
+            sendBtn.textContent = '처리 중...';
+            
             try {
-                let roundCompletedByThisAction = false;
-
-                await runTransaction(db, async (transaction) => {
-                    const turnDoc = await transaction.get(turnStatusRef);
-                    if (!turnDoc.exists()) throw "Turn document does not exist.";
-
-                    const turnData = turnDoc.data();
-                    const submissions = turnData.submissions || {};
-                    const participants = turnData.participants || [];
-
-                    if (submissions[currentUser.uid]) return; 
-
-                    const newSubmissions = { ...submissions, [currentUser.uid]: messageText };
-                    const allSubmitted = participants.every(p => newSubmissions[p]);
-
-                    if (allSubmitted && participants.length > 0) {
-                        const roundMessages = participants.map(pId => ({ senderId: pId, text: newSubmissions[pId] }));
-                        const newMsgRef = doc(collection(db, `chat_rooms/${currentRoomId}/messages`));
-                        
-                        transaction.set(newMsgRef, {
-                            type: 'round',
-                            roundData: roundMessages,
-                            timestamp: serverTimestamp()
-                        });
-                        transaction.update(turnStatusRef, { submissions: {} });
-                        
-                        roundCompletedByThisAction = true;
-
-                    } else {
-                        transaction.update(turnStatusRef, { submissions: newSubmissions });
-                    }
+                console.log('사용자 질문 전송:', messageText);
+                
+                // 사용자 질문 추가
+                await addDoc(collection(db, `chat_rooms/${currentRoomId}/messages`), {
+                    text: messageText,
+                    senderId: currentUser.uid,
+                    timestamp: serverTimestamp()
                 });
                 
                 messageInput.value = '';
-
-                if (roundCompletedByThisAction) {
-                    unlockUI();
-                }
-
+                console.log('사용자 질문 저장 완료');
+                
+                // 게임 턴 처리
+                console.log('게임 턴 처리 시작...');
+                await processGameTurn(messageText);
+                console.log('게임 턴 처리 완료');
+                
             } catch (error) {
-                console.error("메시지 제출 트랜잭션 오류: ", error);
-                showNotification("메시지 제출에 실패했습니다.");
-                unlockUI();
+                console.error("질문 전송 오류: ", error);
+                showNotification("질문 전송에 실패했습니다.");
+            } finally {
+                // UI 잠금 해제
+                messageInput.disabled = false;
+                sendBtn.disabled = false;
+                sendBtn.textContent = '질문';
+                console.log('UI 잠금 해제 완료');
+            }
+        });
+        
+        // 운영자 답변 전송
+        operatorForm.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const responseText = operatorMessageInput.value.trim();
+            if (!responseText || !waitingForOperatorResponse) return;
+            
+            operatorMessageInput.disabled = true;
+            operatorSendBtn.disabled = true;
+            operatorSendBtn.textContent = '전송 중...';
+            
+            try {
+                // 최신 temp_responses 찾기
+                const tempQuery = query(
+                    collection(db, `chat_rooms/${currentRoomId}/temp_responses`),
+                    orderBy('timestamp', 'desc'),
+                    limit(1)
+                );
+                const tempSnapshot = await getDocs(tempQuery);
+                
+                if (!tempSnapshot.empty) {
+                    const tempDoc = tempSnapshot.docs[0];
+                    const tempData = tempDoc.data();
+                    
+                    // 운영자 답변으로 업데이트
+                    const updatedResponses = tempData.responses.map(response => {
+                        if (response.isOperator && response.suspectIndex === operatorSuspectIndex) {
+                            return { ...response, text: responseText };
+                        }
+                        return response;
+                    });
+                    
+                    // 최종 응답 저장
+                    await addDoc(collection(db, `chat_rooms/${currentRoomId}/messages`), {
+                        type: 'all_responses',
+                        responses: updatedResponses,
+                        phaseTitle: tempData.phaseTitle,
+                        timestamp: serverTimestamp()
+                    });
+                    
+                    // 임시 데이터 삭제
+                    await deleteDoc(tempDoc.ref);
+                    
+                    waitingForOperatorResponse = false;
+                    operatorMessageInput.value = '';
+                    operatorMessageInput.placeholder = '운영자로서 답변을 입력하세요...';
+                }
+                
+            } catch (error) {
+                console.error('운영자 답변 전송 오류:', error);
+                showNotification('답변 전송에 실패했습니다.');
+            } finally {
+                operatorMessageInput.disabled = false;
+                operatorSendBtn.disabled = false;
+                operatorSendBtn.textContent = '전송';
             }
         });
         

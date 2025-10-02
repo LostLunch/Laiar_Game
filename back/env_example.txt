@@ -1,0 +1,7 @@
+# OpenAI API Keys for Liar Game
+# 각 AI 참가자별로 다른 API 키를 사용할 수 있습니다 (같은 키를 여러 번 사용해도 됩니다)
+GPT_API_KEY_1=your_openai_api_key_here
+GPT_API_KEY_2=your_openai_api_key_here
+GPT_API_KEY_3=your_openai_api_key_here
+GPT_API_KEY_4=your_openai_api_key_here
+

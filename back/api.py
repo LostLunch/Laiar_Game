@@ -63,7 +63,7 @@ def setting():
 def run_phase(word: str, phase: str):
     outputs = []
     for i in range(4):
-        user_messages[i] = make_prompt(styles[i], word, phase)
+        user_messages[i] = [make_prompt(styles[i], word, phase)]
         response = clients[i].chat.completions.create(
             model="gpt-3.5-turbo",
             messages=user_messages[i],
