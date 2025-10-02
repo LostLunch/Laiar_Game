@@ -58,15 +58,12 @@ def make_prompt(style: str, word: str, phase: str):
 def setting():
     category = random.choice(list(categories.keys()))
     word = random.choice(categories[category])
-    return category, word
+    return word
 
-def declaration(word: str):
+def run_phase(word: str, phase: str):
     outputs = []
-
     for i in range(4):
-        # 초기 프롬프트 설정
-        user_messages[i] = [make_prompt(styles[i], word, "진술")]
-
+        user_messages[i] = make_prompt(styles[i], word, phase)
         response = clients[i].chat.completions.create(
             model="gpt-3.5-turbo",
             messages=user_messages[i],
@@ -76,48 +73,37 @@ def declaration(word: str):
         content = response.choices[0].message.content
         user_messages[i].append({"role": "assistant", "content": content})
         outputs.append(content)
-
     return outputs
-
-def discussion(word: str):
-    outputs = []
-
-    for i in range(4):
-        # 토론 단계 프롬프트를 user 메시지로 추가
-        user_messages[i].append({
-            "role": "user",
-            "content": f"{word}에 대해 토론 시간입니다. {styles[i]} 성격으로 발언하세요."
-        })
-
-        response = clients[i].chat.completions.create(
-            model="gpt-3.5-turbo",
-            messages=user_messages[i],
-            max_tokens=300,
-            temperature=0.7,
-        )
-        content = response.choices[0].message.content
-        user_messages[i].append({"role": "assistant", "content": content})
-        outputs.append(content)
-
-    return outputs
-
 
 app = Flask(__name__)
 CORS(app)
 
-@app.get("/api/health")
-def health():
-    return {"ok": True}
+rounds = ["statement1", "discussion1", "statement2", "discussion2", "vote"]
+current_round_index = 0
 
-@app.route('/api/start_dec', methods=['POST'])
+@app.patch("/api/start_dec")
 def start_dec():
-    category, word = setting()
-    declaration_messages = declaration(word)
-    return jsonify({"category": category, "word": word, "declaration_messages": declaration_messages})
+    word = setting()
+    messages = run_phase(word, "진술")
+    return jsonify({"word": word, "declaration_messages": messages})
 
-@app.route('/api/start_disc', methods=['POST'])
+@app.patch("/api/start_disc")
 def start_disc():
     data = request.get_json()
-    word = data.get('word')
-    discussion_messages = discussion(word)
-    return jsonify({"discussion_messages": discussion_messages})
+    word = data.get("word")
+    messages = run_phase(word, "토론")
+    return jsonify({"discussion_messages": messages})
+
+@app.route("/next_round", methods=["POST"])
+def next_round():
+    global current_round_index
+    if current_round_index < len(rounds) - 1:
+        current_round_index += 1
+    return jsonify({"round": rounds[current_round_index]})
+
+@app.route("/get_round", methods=["GET"])
+def get_round():
+    return jsonify({"round": rounds[current_round_index]})
+
+if __name__ == "__main__":
+    app.run(debug=True)
