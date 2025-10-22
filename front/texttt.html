@@ -50,14 +50,16 @@
         <div class="bg-gray-50 border border-gray-200 rounded-2xl shadow-lg p-6 flex flex-col h-[90vh] max-h-[900px]">
 
             <!-- 로그인 화면 -->
-            <div id="login-screen" class="hidden flex-col items-center justify-center h-full">
+            <div id="login-screen" class="flex flex-col items-center justify-center h-full">
                 <h1 class="text-3xl font-bold text-gray-900 mb-4">로그인</h1>
                 <p class="text-gray-600 mb-8 text-center">계정에 로그인하세요.</p>
                 <div class="w-full max-w-sm flex flex-col items-center gap-4">
                     <input id="login-email-input" type="email" placeholder="이메일" class="w-full p-3 bg-gray-100 border border-gray-300 rounded-lg text-center" />
                     <input id="login-password-input" type="password" placeholder="비밀번호" class="w-full p-3 bg-gray-100 border border-gray-300 rounded-lg text-center" />
                     <button id="login-btn" class="w-full px-6 py-3 bg-blue-600 text-white font-semibold rounded-lg shadow-md hover:bg-blue-700">로그인</button>
-                    <p class="text-sm text-gray-600">
+                    <div class="my-2 flex items-center w-full"><hr class="w-full border-gray-300"><span class="px-4 text-gray-500 text-sm">또는</span><hr class="w-full border-gray-300"></div>
+                    <button id="guest-login-btn" class="w-full px-6 py-3 bg-gray-500 text-white font-semibold rounded-lg shadow-md hover:bg-gray-600">게스트로 로그인</button>
+                    <p class="text-sm text-gray-600 mt-4">
                         계정이 없으신가요? <button id="go-to-signup-btn" class="font-semibold text-blue-600 hover:underline">회원가입</button>
                     </p>
                 </div>
@@ -164,7 +166,7 @@
     
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
-        import { getAuth, onAuthStateChanged, createUserWithEmailAndPassword, signInWithEmailAndPassword, signOut, sendPasswordResetEmail } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getAuth, onAuthStateChanged, createUserWithEmailAndPassword, signInWithEmailAndPassword, signOut, sendPasswordResetEmail, signInAnonymously } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
         import { getFirestore, collection, addDoc, query, onSnapshot, serverTimestamp, doc, getDoc, setDoc, updateDoc, arrayUnion, arrayRemove, runTransaction, where, getDocs, deleteField } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 
         const firebaseConfig = {
@@ -184,6 +186,7 @@
         const signupPasswordInput = document.getElementById('signup-password-input');
         const loginBtn = document.getElementById('login-btn');
         const signupBtn = document.getElementById('signup-btn');
+        const guestLoginBtn = document.getElementById('guest-login-btn');
         const logoutBtn = document.getElementById('logout-btn');
         const goToSignupBtn = document.getElementById('go-to-signup-btn');
         const goToLoginBtn = document.getElementById('go-to-login-btn');
@@ -315,7 +318,6 @@
         async function deleteRoom(roomId) {
             console.log(`User requesting deletion for room: ${roomId}`);
             try {
-                // Check if user is an admin before allowing deletion
                 if (!currentUser) {
                      showNotification("로그인이 필요합니다.", "error");
                      return;
@@ -340,16 +342,16 @@
             if (user) {
                 currentUser = user;
                 try {
-                    // Check for admin privileges from Firestore 'admins' collection
                     const adminRef = doc(db, "admins", user.uid);
                     const adminDoc = await getDoc(adminRef);
                     const isUserAdmin = adminDoc.exists();
 
-                    // Show/hide create room button based on admin status
                     if (isUserAdmin) {
                         createNewRoomBtn.classList.remove('hidden');
+                        userManagementBtn.classList.remove('hidden');
                     } else {
                         createNewRoomBtn.classList.add('hidden');
+                        userManagementBtn.classList.add('hidden');
                     }
 
                     const userRef = doc(db, 'users', user.uid);
@@ -360,13 +362,13 @@
                     } else {
                         userAnimalProfile = animals[Math.floor(Math.random() * animals.length)];
                         await setDoc(userRef, {
-                            email: user.email,
+                            email: user.email || 'guest',
                             animalProfile: userAnimalProfile,
                         });
                     }
 
                     userIdDisplay.textContent = `${userAnimalProfile.emoji} ${userAnimalProfile.name}`;
-                    userEmailDisplay.textContent = user.email;
+                    userEmailDisplay.textContent = user.isAnonymous ? "게스트" : user.email;
 
                     loginScreen.classList.add('hidden');
                     signupScreen.classList.add('hidden');
@@ -378,7 +380,7 @@
                 } catch (error) {
                     console.error("Error during authentication state change:", error);
                     showNotification(`로그인 중 프로필/권한 확인 실패: ${error.message}`, "error");
-                    signOut(auth); // Log out the user if setup fails
+                    signOut(auth);
                 }
             } else {
                 currentUser = null;
@@ -697,58 +699,95 @@
             chatMessages.scrollTop = chatMessages.scrollHeight;
         }
         
-        messageForm.addEventListener('submit', async (e) => {
-            e.preventDefault(); 
-            const messageText = messageInput.value.trim(); 
-            if (!messageText) return;
+        // 백엔드의 AI 응답 생성 엔드포인트를 호출하는 함수
+        // 라운드 상태 추적용 (초기값은 진술)
+        let currentPhase = "진술";
+        let currentWord = null;
 
-            lockUI();
-
-            const turnStatusRef = doc(db, `chat_rooms/${currentRoomId}/turn_status`, 'current');
-
+        // 백엔드의 AI 응답 생성 엔드포인트를 호출하는 함수
+        async function sendMessageToAI(userMessage) {
             try {
-                let roundCompletedByThisAction = false;
+                let endpoint = "";
+                let bodyData = {};
 
-                await runTransaction(db, async (transaction) => {
-                    const turnDoc = await transaction.get(turnStatusRef);
-                    if (!turnDoc.exists()) throw "Turn document does not exist.";
-                    const turnData = turnDoc.data();
-                    const submissions = turnData.submissions || {};
-                    const participants = turnData.participants || [];
-
-                    if (submissions[currentUser.uid]) return; 
-
-                    const newSubmissions = { ...submissions, [currentUser.uid]: messageText };
-                    const allSubmitted = participants.every(p => newSubmissions[p]);
-
-                    if (allSubmitted && participants.length > 0) {
-                        const roundMessages = participants.map(pId => ({ senderId: pId, text: newSubmissions[pId] }));
-                        const newMsgRef = doc(collection(db, `chat_rooms/${currentRoomId}/messages`));
-                        
-                        transaction.set(newMsgRef, {
-                            type: 'round',
-                            roundData: roundMessages,
-                            timestamp: serverTimestamp()
-                        });
-                        transaction.update(turnStatusRef, { submissions: {} });
-                        
-                        roundCompletedByThisAction = true;
-
-                    } else {
-                        transaction.update(turnStatusRef, { submissions: newSubmissions });
-                    }
-                });
-                
-                messageInput.value = '';
-
-                if (roundCompletedByThisAction) {
-                    unlockUI();
+                // 라운드에 따라 다른 API 호출
+                if (currentPhase === "진술") {
+                    endpoint = "http://localhost:5000/api/start_dec";
+                    bodyData = {}; // 제시어는 서버가 알아서 설정
+                } else if (currentPhase === "토론") {
+                    endpoint = "http://localhost:5000/api/start_disc";
+                    bodyData = { word: currentWord }; // 이전 라운드 제시어 전달
+                } else {
+                    // 다른 라운드는 /api/ai_response 기본 엔드포인트 사용
+                    endpoint = "http://localhost:5000/api/ai_response";
+                    bodyData = { prompt: userMessage, phase: currentPhase };
                 }
 
+                const response = await fetch(endpoint, {
+                    method: "PATCH",
+                    headers: {
+                        "Content-Type": "application/json; charset=utf-8"
+                    },
+                    body: JSON.stringify(bodyData)
+                });
+
+                if (!response.ok) {
+                    throw new Error(`Error ${response.status}: ${await response.text()}`);
+                }
+
+                const data = await response.json();
+
+                // 단계별로 응답 처리
+                if (data.word) {
+                    currentWord = data.word; // 제시어 저장
+                }
+
+                let aiResponse = null;
+
+                if (data.declaration_messages) {
+                    aiResponse = data.declaration_messages;
+                    currentPhase = "토론"; // 다음 단계로 전환
+                } else if (data.discussion_messages) {
+                    aiResponse = data.discussion_messages;
+                    currentPhase = "vote"; // 다음 단계 (투표 등)
+                } else if (data.ai_response) {
+                    aiResponse = data.ai_response;
+                }
+
+                return aiResponse;
             } catch (error) {
-                console.error("메시지 제출 트랜잭션 오류: ", error);
-                showNotification("메시지 제출에 실패했습니다.", 'error');
-                unlockUI();
+                console.error("Failed to fetch AI response:", error);
+                return null;
+            }
+        }
+
+
+        messageForm.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const userMessage = messageInput.value.trim();
+            if (!userMessage) return;
+            
+            // 사용자 메시지를 채팅창에 추가
+            const userBubble = renderSingleBubble({ text: userMessage, senderId: currentUser.uid });
+            chatMessages.appendChild(userBubble);
+            chatMessages.scrollTop = chatMessages.scrollHeight;
+            messageInput.value = '';
+
+            // 백엔드에 메시지를 보내 AI 응답을 받음
+            const aiResponse = await sendMessageToAI(userMessage);
+            if (aiResponse) {
+                // 만약 aiResponse가 배열이라면 각 메시지를 개별 말풍선으로 렌더링
+                if (Array.isArray(aiResponse)) {
+                    aiResponse.forEach(msg => {
+                        const aiBubble = renderSingleBubble({ text: msg, senderId: 'ai' });
+                        chatMessages.appendChild(aiBubble);
+                    });
+                } else {
+                    // 단일 응답의 경우
+                    const aiBubble = renderSingleBubble({ text: aiResponse, senderId: 'ai' });
+                    chatMessages.appendChild(aiBubble);
+                }
+                chatMessages.scrollTop = chatMessages.scrollHeight;
             }
         });
         
@@ -779,6 +818,15 @@
                  showNotification(`로그인 실패: ${error.message}`, "error");
             }
         });
+        
+        guestLoginBtn.addEventListener('click', async () => {
+            try {
+                await signInAnonymously(auth);
+                showNotification("게스트로 로그인 성공!", "success");
+            } catch (error) {
+                showNotification(`게스트 로그인 실패: ${error.message}`, "error");
+            }
+        });
 
         logoutBtn.addEventListener('click', async () => {
             try {
@@ -791,12 +839,14 @@
 
         goToSignupBtn.addEventListener('click', () => {
             loginScreen.classList.add('hidden');
+            loginScreen.classList.remove('flex');
             signupScreen.classList.remove('hidden');
             signupScreen.classList.add('flex');
         });
 
         goToLoginBtn.addEventListener('click', () => {
             signupScreen.classList.add('hidden');
+            signupScreen.classList.remove('flex');
             loginScreen.classList.remove('hidden');
             loginScreen.classList.add('flex');
         });
@@ -835,8 +885,9 @@
                     userDiv.className = 'p-3 mb-2 bg-white rounded-lg shadow-sm flex items-center justify-between';
 
                     const userInfoDiv = document.createElement('div');
+                    const userEmailText = (userData.email === 'guest' || !userData.email) ? '게스트 계정' : userData.email;
                     userInfoDiv.innerHTML = `
-                        <p class="text-sm font-semibold">${userData.email}</p>
+                        <p class="text-sm font-semibold">${userEmailText}</p>
                         <p class="text-xs text-gray-600">현재 닉네임: ${userData.animalProfile.emoji} ${userData.animalProfile.name}</p>
                     `;
 
@@ -867,16 +918,18 @@
                         }
                     };
                     
-                    const resetPasswordBtn = document.createElement('button');
-                    resetPasswordBtn.textContent = '비밀번호 재설정';
-                    resetPasswordBtn.className = 'px-2 py-1 bg-orange-500 text-white text-xs rounded hover:bg-orange-600';
-                    resetPasswordBtn.onclick = () => {
-                        sendPasswordReset(userData.email);
-                    };
-
                     userActionDiv.appendChild(newNameSelect);
                     userActionDiv.appendChild(saveBtn);
-                    userActionDiv.appendChild(resetPasswordBtn);
+
+                    if (userData.email && userData.email !== 'guest') {
+                        const resetPasswordBtn = document.createElement('button');
+                        resetPasswordBtn.textContent = '비밀번호 재설정';
+                        resetPasswordBtn.className = 'px-2 py-1 bg-orange-500 text-white text-xs rounded hover:bg-orange-600';
+                        resetPasswordBtn.onclick = () => {
+                            sendPasswordReset(userData.email);
+                        };
+                        userActionDiv.appendChild(resetPasswordBtn);
+                    }
                     
                     userDiv.appendChild(userInfoDiv);
                     userDiv.appendChild(userActionDiv);
@@ -913,7 +966,7 @@
 
 
         const catEmojiElement = document.getElementById('cat-emoji');
-        const specialCatImageUrl = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAEAAAABACAYAAACqaXHeAAAAAXNSR0IArs4c6QAAAARnQU1BAACxjwv8YQUAAAAJcEhZcwAAEnQAABJ0Ad5mH3gAAAUoSURBVHhe7VtdiFVVFL7v2+lu1VOzBjPMMsPSChIiiCBEsiiyoKIvCl0oF6GuhUIXgghZFgU9iIgiA9EDpdFFL0UXQW9EEARdKEPYDBKkZ5Znpudk+5x7Du/M2b1r7z1z9jrnwz8+955zfp9zZ87ce885gP+nEaE0IZQmBNmE0L1YhNCkI5QmBNmE0IZQm3BCaEKoTQhNCK3b9GkQghC+ZgihS0M0J9S2QmiD0DQhNCeEMgStEELrhNCG0Lq2CeH5IQQhNCeE2oRQE6E/QmhC+LgQmvB/DkL//xGhtCEAixAaFrRACG0IgRCaFkIQ+hAaF95fEIIQEIIQIX+FEKGEEEIIO/gqhBCChBAhhBDyP1aE0A9DCEKEEEKkEMJEiP5NCM2TUIQQqoS+b8I8CEEIdQn9N+F5IQQhtCW0bhuE0H8hhCB0CU3D8I4QhC7B9+UhhC6FaUIoTRBC6ED4g+A3QgghdOENJIT6NwhBuCF+EELvQmhDtA6aELoTWhOEc0LoIghBCH0LzRAaLwSBkBBChBCChBC6EKqEEELrRAjNCaENQTehH4TGE4QQ+lG4Bf1iA6GEEHpHCKE9IdQhdCdUCCE0ZwhdaDwhdBe0TQj9IBQhhBC6EKoTQm1CuAl9ILwEIdQndC8mEEIIpQmhJkL3YhdC/1+BEEI3Qm1CeCGEEEIIofcMhNCb0A+hGTOCAgAASURBVG0JnQmk6aEIIIYReL0I/hDaE2oReEMpGCCA0TQjVCH0f6kJ4hRBC6AWhG4TGEyGEEMITQoh+IYSwhhBCEELvWwh9CM0QRQjVCOEN4ReFEILQnaAThDaEegidCSGEEGoThNC88B6E0AQhBCGEGkJoTohGhNCGkJkQ+iHEaRBCv8bK0P+9CEEIMYQQQohQQghBCH3/4J8IoQuhH0LrhNAsEKGEEELrE0JoQ/gjhC6FNoReEJoQ+kEIIYReEELoTaggdCe0RgghhDaE7oTwhRBC6EIIIfQnhNCG0BWhYUKoQwhB6EKIGkJrQmhDtA6EEEJnQj9Ebwj9EIQQQmhC6ET4x34BfLwQeucn9L+JEEKIGkIIIYQQQk2EEMITwvc/CCHk4EEIIYRehRBC6EH4d3whhLCE/jfw6EEIIYQQwveL/QQIoQkhQghBuCFCCCEIIYQQQgiBWBBCEIIQPnwhhJATQk2EEELrRAghhNCb0JoQmhBCEMIIpQmhCYFGEEIIQeghhLCEEGIIQQhdCP+fA0JrhRBCCH0Q/l8LhBCaEIIIIdQhdCM0Rwh9CF0JpQmBH0IIIfSjUIII/RehCaEThRBCaEDoG5/vX/0V5qgAAAAAElFTuQmCC";
+        const specialCatImageUrl = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAEAAAABACAYAAACqaXHeAAAAAXNSR0IArs4c6QAAAARnQU1BAACxjwv8YQUAAAAJcEhZcwAAEnQAABJ0Ad5mH3gAAAUoSURBVHhe7VtdiFVVFL7v2+lu1VOzBjPMMsPSChIiiCBEsiiyoKIvCl0oF6GuhUIXgghZFgU9iIgiA9EDpdFFL0UXQW9EEARdKEPYDBKkZ5Znpudk+5x7Du/M2b1r7z1z9jrnwz8+955zfp9zZ87ce885gP+nEaE0IZQmBNmE0L1YhNCkI5QmBNmE0IZQm3BCaEKoTQhNCK3b9GkQghC+ZgihS0M0J9S2QmiD0DQhNCeEMgStEELrhNCG0Lq2CeH5IQQhNCeE2oRQE6E/QmhC+LgQmvB/DkL//xGhtCEAixAaFrRACG0IgRCaFkIQ+hAaF95fEIIQEIIQIX+FEKGEEEIIO/gqhBCChBAhhBDyP1aE0A/DCEKEEEKkEMJEiP5NCM2TUIQQqoS+b8I8CEEIdQn9N+F5IQQhtCW0bhuE0H8hhCB0CU3D8I4QhC7B9+UhhC6FaUIoTRBC6ED4g+A3QgghdOENJIT6NwhBuCF+EELvQmhDtA6aELoTWhOEc0LoIghBCH0LzRAaLwSBkBBChBCChBC6EKqEEELrRAjNCaENQTehH4TGE4QQ+lG4Bf1iA6GEEHpHCKE9IdQhdCdUCCE0ZwhdaDwhdBe0TQj9IBQhhBC6EKoTQm1CuAl9ILwEIdQndC8mEEIIpQmhJkL3YhdC/1+BEEI3Qm1CeCGEEEIIofcMhNCb0A+hGTOCAgAASURBVG0JnQmk6aEIIIYReL0I/hDaE2oReEMpGCCA0TQjVCH0f6kJ4hRBC6AWhG4TGEyGEEMITQoh+IYSwhhBCEELvWwh9CM0QRQjVCOEN4ReFEILQnaAThDaEegidCSGEEGoThNC88B6E0AQhBCGEGkJoTohGhNCGkJkQ+iHEaRBCv8bK0P+9CEEIMYQQQohQQghBCH3/4J8IoQuhH0LrhNAsEKGEEELrE0JoQ/gjhC6FNoReEJoQ+kEIIYReEELoTaggdCe0RgghhDaE7oTwhRBC6EIIIfQnhNCG0BWhYUKoQwhB6EKIGkJrQmhDtA6EEEJnQj9Ebwj9EIQQQmhC6ET4x34BfLwQeucn9L+JEEKIGkIIIYQQQk2EEMITwvc/CCHk4EEIIYRehRBC6EH4d3whhLCE/jfw6EEIIYQQwveL/QQIoQkhQghBuCFCCCEIIYQQQgiBWBBCEIIQPnwhhJATQk2EEELrRAghhNCb0JoQmhBCEMIIpQmhCYFGEEIIQeghhLCEEGIIQQhdCP+fA0JrhRBCCH0Q/l8LhBCaEIIIIdQhdCM0Rwh9CF0JpQmBH0IIIfSjUIII/RehCaEThRBCaEDoG5/vX/0V5qgAAAAAElFTuQmCC";
         let isSpecialCatVisible = false;
 
         messageInput.addEventListener('input', () => {
