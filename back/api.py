@@ -1,17 +1,17 @@
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify, render_template
 from openai import OpenAI
 from flask_cors import CORS
 import os
 from dotenv import load_dotenv
 import random
-
+import json
 load_dotenv()
 
 # 각 참가자별 클라이언트
-client_tough = OpenAI(api_key=os.getenv("GPT_API_KEY_1"))
-client_sense = OpenAI(api_key=os.getenv("GPT_API_KEY_2"))
-client_shrewd = OpenAI(api_key=os.getenv("GPT_API_KEY_3"))
-client_funny = OpenAI(api_key=os.getenv("GPT_API_KEY_4"))
+client_tough   = OpenAI(api_key=os.getenv("GPT_API_KEY_1"))
+client_sense   = OpenAI(api_key=os.getenv("GPT_API_KEY_2"))
+client_shrewd  = OpenAI(api_key=os.getenv("GPT_API_KEY_3"))
+client_funny   = OpenAI(api_key=os.getenv("GPT_API_KEY_4"))
 
 clients = [client_tough, client_sense, client_shrewd, client_funny]
 
@@ -75,11 +75,16 @@ def run_phase(word: str, phase: str):
         outputs.append(content)
     return outputs
 
-app = Flask(__name__)
+app = Flask(__name__, template_folder="templates")
 CORS(app)
 
 rounds = ["statement1", "discussion1", "statement2", "discussion2", "vote"]
 current_round_index = 0
+
+# 프론트엔드 HTML을 렌더링하는 엔드포인트
+@app.route("/")
+def index():
+    return render_template("texttt.html")
 
 @app.patch("/api/start_dec")
 def start_dec():
@@ -89,8 +94,18 @@ def start_dec():
 
 @app.patch("/api/start_disc")
 def start_disc():
-    data = request.get_json()
+    try:
+        # request.get_data()로 원시 데이터를 받고, UTF-8로 디코딩 (문제 있는 부분은 � 로 표시)
+        raw_data = request.get_data()
+        decoded_data = raw_data.decode('utf-8', errors='replace')
+        data = json.loads(decoded_data)
+    except Exception as e:
+        return jsonify({"error": "JSON decoding error", "detail": str(e)}), 400
+
     word = data.get("word")
+    if not word:
+        return jsonify({"error": "word key is missing"}), 400
+
     messages = run_phase(word, "토론")
     return jsonify({"discussion_messages": messages})
 
