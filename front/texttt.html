@@ -237,7 +237,9 @@
         let userAnimalProfile = null;
         let participantProfiles = {};
         let currentMessages = [];
-        let roomListTimer = null;   // 현재 방의 이름 매핑 객체
+        let roomListTimer = null;
+        let isCurrentUserAdmin = false; // 현재 사용자가 관리자인지 여부
+        let currentNameMapping = {};   // 현재 방의 이름 매핑 객체
         
         function showNotification(message, type = 'success', duration = 5000) {
             const notification = document.createElement('div');
@@ -248,7 +250,6 @@
             setTimeout(() => { notification.remove(); }, duration);
         }
 
-        
         
         function listenToAvailableRooms() {
             if (roomListTimer) clearInterval(roomListTimer);
@@ -619,6 +620,7 @@
         createNewRoomBtn.addEventListener('click', async () => {
             const newRoomId = Math.random().toString(36).substring(2, 8);
             
+                
 
             await setDoc(doc(db, 'chat_rooms', newRoomId), { 
                 createdAt: serverTimestamp(),
