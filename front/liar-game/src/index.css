@@ -1,8 +1,7 @@
 /* src/index.css */
-@import 'tailwind';
-@tailwind base;
-@tailwind components;
-@tailwind utilities;
+@import 'tailwindcss/base';
+@import 'tailwindcss/components';
+@import 'tailwindcss/utilities';
 
 /* 옵션: Inter 폰트 설정 (Tailwind 기본 설정) */
 @layer base {
