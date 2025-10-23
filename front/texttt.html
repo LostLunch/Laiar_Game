@@ -125,7 +125,7 @@
 
             <!-- 대화 주제 선택 화면 -->
             <div id="topic-selection" class="hidden flex-col items-center justify-center h-full">
-                <h1 class="text-2xl font-bold text-gray-900 mb-6">카테고리가 결정되었습니다</h1>
+                <h1 class="text-2xl font-bold text-gray-900 mb-6">당신은 시민입니다</h1>
                 <div id="random-topic-display" class="mb-8 text-2xl text-center text-gray-700 bg-gray-100 px-8 py-4 rounded-lg">
                     <!-- JavaScript에 의해 주제가 채워집니다 -->
                 </div>
@@ -140,7 +140,9 @@
                            <h1 class="text-3xl font-bold text-gray-900">채팅방</h1>
                         </div>
                         <div class="text-center col-span-1">
-                           <p class="text-lg text-gray-600">카테고리: <span id="topic-display" class="font-semibold text-gray-700"></span></p>
+                           <p class="text-lg text-gray-600">직업 : 시민</span></p>
+                           <!-- 서버에서 선택한 제시어(비밀 단어) 표시 -->
+                           <p class="text-sm text-gray-500 mt-1">제시어: <span id="secret-word-display" class="font-semibold text-gray-700">-</span></p>
                         </div>
                         <div class="text-right">
                            <button id="leave-room-btn" class="text-sm text-red-500 hover:underline">나가기</button>
@@ -407,31 +409,105 @@
         };
 
         async function showTopicSelectionScreen(roomId) {
-            currentRoomId = roomId;
-            const turnStatusRef = doc(db, `chat_rooms/${roomId}/turn_status`, 'current');
-            try {
-                const turnStatusSnap = await getDoc(turnStatusRef);
+        currentRoomId = roomId;
 
-                if (turnStatusSnap.exists()) {
-                    selectedTopic = turnStatusSnap.data().topic;
-                    randomTopicDisplay.textContent = `카테고리: ${selectedTopic}`;
-                    roomSelection.classList.add('hidden');
-                    userManagementPanel.classList.add('hidden');
-                    topicSelection.classList.remove('hidden');
-                    topicSelection.classList.add('flex');
-                } else {
-                    showNotification("방 정보를 불러오는 데 실패했습니다.", 'error');
-                }
-            } catch(error) {
-                console.error("Error showing topic selection:", error);
-                showNotification(`방 정보를 불러오는 중 오류 발생: ${error.message}`, "error");
+        // 🔽 *** 2-1. [수정] Firestore가 아닌, "게임 설정 API"를 호출 *** 🔽
+        try {
+            // 1. [핵심] 백엔드의 "set_game_word" API를 호출합니다.
+            // (이 호출로 백엔드의 전역 변수 current_word와 current_category가 설정됩니다)
+            const resp = await fetch('http://localhost:5000/api/set_game_word', {
+                method: 'PATCH',
+                headers: { 'Content-Type': 'application/json; charset=utf-8' }
+            });
+            
+            if (!resp.ok) {
+                throw new Error(`API Error: ${await resp.text()}`);
             }
+            
+            const data = await resp.json();
+            
+            // 2. 백엔드가 정해준 "카테고리"를 받아와 화면에 표시합니다.
+            selectedTopic = data.category || '알 수 없음'; // 전역 변수에도 저장
+            randomTopicDisplay.textContent = `카테고리: ${selectedTopic}`;
+            
+            // 3. (선택사항) Firestore turn_status에도 카테고리 기록
+            try {
+                const turnStatusRef = doc(db, `chat_rooms/${currentRoomId}/turn_status`, 'current');
+                await setDoc(turnStatusRef, { topic: selectedTopic, word: null }, { merge: true });
+            } catch (errSync) {
+                console.warn('turn_status에 카테고리 기록 실패:', errSync);
+            }
+
+            // 4. 카테고리 선택 화면으로 전환
+            roomSelection.classList.add('hidden'); // (ID가 room-list-panel일 수 있음)
+            userManagementPanel.classList.add('hidden');
+            topicSelection.classList.remove('hidden');
+            topicSelection.classList.add('flex');
+            
+        } catch(error) {
+            console.error("Error in showTopicSelectionScreen:", error);
+            showNotification(`게임 설정 API 호출 중 오류 발생: ${error.message}`, "error");
         }
+        // 🔼 *** 2-1. 수정 완료 *** 🔼
+    }
 
         startChatBtn.addEventListener('click', () => {
-            if (currentRoomId) {
-                enterChatRoom(currentRoomId);
-            }
+            (async () => {
+                if (!currentRoomId) return showNotification("방 ID가 없습니다.", "error");
+                try {
+                    const resp = await fetch('http://localhost:5000/api/start_dec', {
+                        method: 'PATCH',
+                        headers: { 'Content-Type': 'application/json; charset=utf-8' }
+                    });
+                    if (!resp.ok) throw new Error(await resp.text());
+                    const data = await resp.json();
+                    
+                    currentWord = data.word || null;
+                    const secretEl = document.getElementById('secret-word-display');
+                    if (secretEl) secretEl.textContent = currentWord || '-';
+
+                   // ===== 동기화: 서버가 정한 제시어를 방의 turn_status에 기록 =====
+                   try {
+                       const turnStatusRef = doc(db, `chat_rooms/${currentRoomId}/turn_status`, 'current');
+                       await updateDoc(turnStatusRef, { word: currentWord });
+                   } catch (errSync) {
+                       console.warn('turn_status에 제시어 기록 실패:', errSync);
+                   }
+                   // =======================================================
+
+                    // 🔽 *** 수정된 부분 (1/2) *** 🔽
+                    // 채팅방에 먼저 입장하여 chatMessages 엘리먼트가 준비되도록 합니다.
+                    enterChatRoom(currentRoomId);
+                    
+                    // AI의 첫 번째 진술 메시지를 채팅창에 표시합니다.
+                    if (data.declaration_messages && Array.isArray(data.declaration_messages)) {
+                        // "진술" 라운드라는 것을 알리는 시스템 메시지 추가
+                        const wrapper = document.createElement('div');
+                        wrapper.className = 'flex justify-center my-3';
+                        const textDiv = document.createElement('div');
+                        textDiv.className = 'text-xs text-gray-500 bg-gray-200 px-3 py-1 rounded-full';
+                        textDiv.textContent = '=== 1차 진술 시작 ===';
+                        wrapper.appendChild(textDiv);
+                        chatMessages.appendChild(wrapper); // chatMessages가 이제 사용 가능
+                        
+                        data.declaration_messages.forEach((msg, index) => {
+                            // AI 프로필이 없으므로 'ai_X' ID를 사용
+                            const aiBubble = renderSingleBubble({ text: msg, senderId: `ai_${index}` });
+                            chatMessages.appendChild(aiBubble);
+                        });
+                        chatMessages.scrollTop = chatMessages.scrollHeight;
+                    }
+                    
+                    // "진술" 단계가 완료되었으므로, 다음 단계를 "토론"으로 설정합니다.
+                    currentPhase = "토론"; 
+                    // 🔼 *** 수정 완료 (1/2) *** 🔼
+
+                    // enterChatRoom(currentRoomId); // ⬅️ 이 라인을 위로 이동시켰습니다.
+                } catch (err) {
+                    console.error('start_dec failed:', err);
+                    showNotification('제시어를 불러오는 데 실패했습니다.', 'error');
+                }
+            })();
         });
 
         async function enterChatRoom(roomId) {
@@ -631,6 +707,14 @@
                 const newParticipantProfiles = turnData.participantProfiles || {};
                 selectedTopic = turnData.topic; 
 
+                // 서버/운영자가 설정한 제시어가 있으면 화면에 표시
+                const secretEl = document.getElementById('secret-word-display');
+                if (secretEl) {
+                    secretEl.textContent = turnData.word || '-';
+                    // 프론트 변수도 동기화
+                    currentWord = turnData.word || currentWord;
+                }
+
                 if (JSON.stringify(participantProfiles) !== JSON.stringify(newParticipantProfiles)) {
                     participantProfiles = newParticipantProfiles;
                     if (currentMessages.length > 0) {
@@ -707,21 +791,18 @@
         // 백엔드의 AI 응답 생성 엔드포인트를 호출하는 함수
         async function sendMessageToAI(userMessage) {
             try {
-                let endpoint = "";
-                let bodyData = {};
+                // 🔽 *** 수정된 부분 *** 🔽
+                // 모든 AI 응답 요청을 /api/ai_response 엔드포인트로 통일합니다.
+                // /api/start_dec는 startChatBtn에서만 호출하도록 변경되었습니다.
+                // currentWord는 백엔드 서버에 저장된 값을 사용하므로 보낼 필요가 없습니다.
 
-                // 라운드에 따라 다른 API 호출
-                if (currentPhase === "진술") {
-                    endpoint = "http://localhost:5000/api/start_dec";
-                    bodyData = {}; // 제시어는 서버가 알아서 설정
-                } else if (currentPhase === "토론") {
-                    endpoint = "http://localhost:5000/api/start_disc";
-                    bodyData = { word: currentWord }; // 이전 라운드 제시어 전달
-                } else {
-                    // 다른 라운드는 /api/ai_response 기본 엔드포인트 사용
-                    endpoint = "http://localhost:5000/api/ai_response";
-                    bodyData = { prompt: userMessage, phase: currentPhase };
-                }
+                const endpoint = "http://localhost:5000/api/ai_response";
+                const bodyData = { 
+                    prompt: userMessage,  // 사용자의 채팅 메시지
+                    phase: currentPhase   // 현재 게임 단계 (예: "토론")
+                };
+                
+                // 🔼 *** (이전 if/else 로직 삭제) *** 🔼
 
                 const response = await fetch(endpoint, {
                     method: "PATCH",
@@ -737,22 +818,26 @@
 
                 const data = await response.json();
 
-                // 단계별로 응답 처리
+                // 🔽 *** 수정된 부분 *** 🔽
+                // /api/ai_response는 항상 "ai_response" 키로 응답합니다.
+                
                 if (data.word) {
-                    currentWord = data.word; // 제시어 저장
+                    // (참고) 응답에 word가 포함되어 오지만, 
+                    // 이미 startChatBtn에서 설정했으므로 여기서 갱신할 필요는 없습니다.
+                    currentWord = data.word; 
                 }
 
                 let aiResponse = null;
 
-                if (data.declaration_messages) {
-                    aiResponse = data.declaration_messages;
-                    currentPhase = "토론"; // 다음 단계로 전환
-                } else if (data.discussion_messages) {
-                    aiResponse = data.discussion_messages;
-                    currentPhase = "vote"; // 다음 단계 (투표 등)
-                } else if (data.ai_response) {
+                if (data.ai_response) {
                     aiResponse = data.ai_response;
+                } else {
+                    // 예외 처리: 혹시 모를 다른 형식의 응답
+                    console.warn("AI 응답이 'ai_response' 키에 없습니다.", data);
+                    return null;
                 }
+                
+                // 🔼 *** (이전 declaration_messages 등 처리 로직 삭제) *** 🔼
 
                 return aiResponse;
             } catch (error) {
