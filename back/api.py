@@ -72,7 +72,7 @@ def make_prompt(style: str, word: str, phase: str, context_text: str = ""):
 
 6. **모호성 유지:** 라이어가 바로 정답을 떠올리지 못하도록 **직접적이지 않고 살짝 빗대는 말**로 설명하세요. 직접적인 관련이 있는 단어는 사용하지 마세요.
 
-7. **⚠️ 답변 형식 강제:** 당신의 답변은 반드시 "**이것은... 입니다.**" 형식으로 **완벽하게 끝나야 합니다.** (다른 문장 형식, 혹은 중간에 끊기는 문장은 허용하지 않습니다.)
+7. **⚠️ 답변 형식 강제:** 당신의 답변은 반드시 "**이것은"으로 시작해 "입니다."로 끝나야 합니다.**" 형식으로 **완벽하게 끝나야 합니다.** (다른 문장 형식, 혹은 중간에 끊기는 문장은 허용하지 않습니다.)
 
 8. 이모티콘 또한 사용하지 마세요.
 
@@ -94,7 +94,7 @@ def make_prompt(style: str, word: str, phase: str, context_text: str = ""):
 def setting():
     category = random.choice(list(categories.keys()))
     word = random.choice(categories[category])
-    return word
+    return category, word
 
 
 # ---------------------
@@ -134,7 +134,7 @@ def run_phase(word: str, phase: str, context_text: str = "", reset_history: bool
             temperature=0.5,
         )
         content = response.choices[0].message.content.strip()
-
+        print("[백엔드 로그] 현재 진행 중인 라운드: ", phase)
         # 응답을 히스토리에 저장(다음 호출에서 문맥으로 활용)
         user_messages[i].append({"role": "assistant", "content": content})
         return content
@@ -171,13 +171,11 @@ def set_game_word():
     global current_word, current_category, categories, user_messages, current_phase
     
     # 1. 카테고리와 단어 랜덤 선택
-    category_name = random.choice(list(categories.keys()))
-    word_list = categories[category_name]
-    word = random.choice(word_list)
+
     
     # 2. [핵심] 전역 변수에 설정
-    current_word = word
-    current_category = category_name
+    current_category,current_word = setting()
+    
     
     # 3. 게임 상태 초기화
     current_phase = "진술"
@@ -185,9 +183,9 @@ def set_game_word():
     
     print(f"[백엔드 로그] 게임 설정 완료 - 카테고리: {current_category}, 제시어: {current_word}")
 
-    # 4. 프론트엔드에는 "카테고리"만 반환 (사용자에게 보여줄 용도)
     return jsonify({
-        "category": current_category
+        "category": current_category,
+        "word": current_word
     })
 # 🔼 *** 1-1. 신규 API 추가 완료 *** 🔼
 
