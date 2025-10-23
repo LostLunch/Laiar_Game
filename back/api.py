@@ -1,4 +1,4 @@
-from flask import Flask, request, jsonify, render_template
+from flask import Flask, request, jsonify
 from openai import OpenAI
 from flask_cors import CORS
 import os
@@ -6,18 +6,25 @@ from dotenv import load_dotenv
 import random
 import json
 import concurrent.futures
+import string
 
 load_dotenv()
 
 # ---------------------
 # OpenAI 클라이언트 4명
 # ---------------------
-client_tough   = OpenAI(api_key=os.getenv("GPT_API_KEY_1"))
-client_sense   = OpenAI(api_key=os.getenv("GPT_API_KEY_2"))
-client_shrewd  = OpenAI(api_key=os.getenv("GPT_API_KEY_3"))
-client_funny   = OpenAI(api_key=os.getenv("GPT_API_KEY_4"))
-
-clients = [client_tough, client_sense, client_shrewd, client_funny]
+clients = []
+for i in range(1, 5):
+    try:
+        clients.append(OpenAI(api_key=os.getenv(f"GPT_API_KEY_{i}")))
+    except Exception as e:
+        print(f"Error initializing OpenAI client {i}: {e}")
+        # API 키가 없어도 실행은 가능하게 더미 객체 추가 (실제 API 호출은 실패함)
+        class DummyClient:
+            def chat(self): return self
+            def completions(self): return self
+            def create(self): return {'choices': [{'message': {'content': '더미 응답: API 키 오류'}}]}
+        clients.append(DummyClient())
 
 # ---------------------
 # 상태 관리
@@ -26,6 +33,18 @@ user_messages = [ [] for _ in range(4) ]
 current_word = None  # 제시어 저장용
 current_category = None
 current_phase = "진술"
+
+rooms = {}
+
+# 초기 게임 상태
+def init_room_state():
+    return {
+        "user_messages": [ [] for _ in range(4) ], # 4명 AI의 대화 이력
+        "current_word": None,
+        "current_category": None,
+        "current_phase": "진술",
+    }
+
 
 categories = {
     "동물": ['사자', '호랑이', '코끼리', '치타', '독수리'],
@@ -96,53 +115,86 @@ def setting():
     word = random.choice(categories[category])
     return category, word
 
+def generate_room_code(length=6):
+    """6자리 영문 대문자, 숫자로 구성된 방 코드 생성"""
+    characters = string.ascii_uppercase + string.digits
+    return ''.join(random.choice(characters) for i in range(length))
+
 
 # ---------------------
 # 라운드별 실행
 # ---------------------
-def run_phase(word: str, phase: str, context_text: str = "", reset_history: bool = False):
+def run_phase(room_code, word, phase, context_text=None):
     """
-    word: 제시어
-    phase: 현재 단계(예: "진술","토론","대화")
-    context_text: (선택) 현재 사용자/운영자 입력 등, 각 모델에 user 메시지로 전달됨
-    reset_history: True면 각 클라이언트 히스토리를 초기화 (새 라운드 시작시 사용)
+    GPT-4o (혹은 설정된 클라이언트)를 사용하여 AI 4명의 발언을 동시에 생성
+    context_text: 사용자의 이전 발언 (토론용) 또는 1차 진술 (초기 진술 트리거용)
     """
-    def get_response(i):
-        # 라운드 초기화 필요하면 히스토리 비우기
-        if reset_history:
-            user_messages[i] = []
+    if room_code not in rooms:
+        raise ValueError(f"Room code {room_code} not found.")
 
-        # 시스템 메시지(규칙, 스타일)
-        conversation = [make_prompt(styles[i], word, phase)]
+    room = rooms[room_code]
+    
+    # AI별 성격 설정
+    personalities = [
+        "당신은 제시어를 알고 있으며, 거칠고 끈질기게 라이어를 추궁합니다.",
+        "당신은 제시어를 알고 있으며, 예리하고 논리적으로 추론합니다.",
+        "당신은 제시어를 알고 있으며, 교활하고 애매모호한 발언을 하여 라이어를 혼란시킵니다.",
+        "당신은 제시어를 알고 있으며, 재미있고 엉뚱한 비유를 사용하여 라이어를 방심하게 합니다."
+    ]
 
-        # 이전 히스토리(유저/어시스턴트 대화)를 붙임
-        if user_messages[i]:
-            conversation.extend(user_messages[i])
+    # 시스템 프롬프트
+    system_base = f"당신은 라이어 게임 참가자입니다. 제시어는 '{word}'입니다. "
+    
+    # 1. 이전 대화 기록 추가 (phase=진술인 경우 초기화)
+    if phase == "진술":
+        # 1차 진술은 새로운 턴이므로 기록 초기화
+        for i in range(4):
+            room["user_messages"][i] = []
+        
+        # 1차 진술 시스템 프롬프트
+        # context_text는 사용자(참가자)의 1차 진술임.
+        system_phase = f"지금은 1차 진술 단계이며, 다른 참가자의 진술({context_text})을 들었습니다. 당신의 제시어('{word}')와 관련하여 추상적이거나 모호하게 발언하세요. 제시어를 직접 언급하지 마세요. 30자 내외로 짧게 답변하세요."
+        
+    else: # phase == "토론"
+        # 이전 대화 내용이 있는 경우 대화 기록 유지
+        system_phase = f"지금은 {phase} 단계입니다. 다른 참가자들(AI, 라이어, 사용자)과의 자유 토론입니다. 가장 최근 발언({context_text})에 대해 반박, 동의, 또는 질문을 하세요. 30자 내외로 짧게 답변하세요."
+        # 모든 AI의 대화 기록에 사용자 메시지 추가
+        for i in range(4):
+            room["user_messages"][i].append({"role": "user", "content": context_text})
 
-        # 현재 들어온 prompt/context는 user 역할로 추가하고,
-        # *** 이 부분이 가장 중요합니다: 히스토리에 현재 user 발언을 저장해야 다음 호출에 문맥으로 전달됩니다. ***
-        if context_text:
-            # 1. API 호출에 포함
-            conversation.append({"role": "user", "content": context_text}) 
-            # 2. 다음 호출을 위해 히스토리에 저장 
-            user_messages[i].append({"role": "user", "content": context_text}) # ⬅️ 추가된 라인
 
-        response = clients[i].chat.completions.create(
-            model="gpt-4o",
-            messages=conversation,
-            max_tokens=300,
-            temperature=0.5,
-        )
-        content = response.choices[0].message.content.strip()
-        print("[백엔드 로그] 현재 진행 중인 라운드: ", phase)
-        # 응답을 히스토리에 저장(다음 호출에서 문맥으로 활용)
-        user_messages[i].append({"role": "assistant", "content": content})
-        return content
+    def get_ai_response(client_index):
+        client = clients[client_index]
+        personality = personalities[client_index]
+        history = room["user_messages"][client_index]
+        
+        system_prompt = system_base + personality + system_phase
+        
+        try:
+            # history와 system_prompt를 합쳐서 GPT 호출
+            messages = [{"role": "system", "content": system_prompt}] + history
+            
+            response = client.chat.completions.create(
+                model="gpt-4o-mini", # 비용 효율적인 모델 선택
+                messages=messages,
+                max_tokens=100
+            )
+            # AI 응답을 대화 기록에 추가
+            ai_response = response.choices[0].message.content
+            room["user_messages"][client_index].append({"role": "assistant", "content": ai_response})
+            return ai_response
+            
+        except Exception as e:
+            print(f"GPT Client {client_index+1} Error: {e}")
+            return f"오류: {client_index+1}번 AI 응답 실패"
 
+
+    # 4명의 AI 응답을 병렬 처리
     with concurrent.futures.ThreadPoolExecutor() as executor:
-        results = list(executor.map(get_response, range(4)))
-    return results
-
+        futures = [executor.submit(get_ai_response, i) for i in range(4)]
+        ai_responses = [f.result() for f in futures]
+    
+    return ai_responses
 
 # ---------------------
 # Flask 서버
@@ -154,98 +206,104 @@ rounds = ["statement1", "discussion1", "statement2", "discussion2", "vote"]
 current_round_index = 0
 
 
-@app.route("/")
-def index():
-    return render_template("texttt.html")
 
 
 
-
-@app.patch("/api/set_game_word")
-def set_game_word():
-    """
-    게임을 새로 설정합니다.
-    카테고리와 제시어를 랜덤으로 선택하고 전역 변수에 저장합니다.
-    프론트엔드에는 '카테고리'만 반환합니다. (보여주기 용)
-    """
-    global current_word, current_category, categories, user_messages, current_phase
+@app.route("/api/set_game_word", methods=["PATCH"])
+def api_set_game_word():
+    """방을 생성하고 제시어를 설정합니다."""
+    data = request.get_json(force=True)
+    room_code = data.get("room_code")
     
-    # 1. 카테고리와 단어 랜덤 선택
+    # room_code가 없으면 새로 생성
+    if not room_code or room_code in rooms:
+        room_code = generate_room_code()
 
+    # 방 초기화 및 제시어/카테고리 설정
+    rooms[room_code] = init_room_state()
     
-    # 2. [핵심] 전역 변수에 설정
-    current_category,current_word = setting()
+    selected_category = random.choice(list(categories.keys()))
+    selected_word = random.choice(categories[selected_category])
     
+    rooms[room_code]["current_category"] = selected_category
+    rooms[room_code]["current_word"] = selected_word
     
-    # 3. 게임 상태 초기화
-    current_phase = "진술"
-    user_messages = [ [] for _ in range(4) ] # 새 게임이므로 대화 기록 초기화
-    
-    print(f"[백엔드 로그] 게임 설정 완료 - 카테고리: {current_category}, 제시어: {current_word}")
-
     return jsonify({
-        "category": current_category,
-        "word": current_word
+        "room_code": room_code,
+        "category": selected_category,
+        "word": selected_word
     })
-# 🔼 *** 1-1. 신규 API 추가 완료 *** 🔼
 
 
 # 🟡 1차 진술 시작 (제시어 *사용*)
 # 🔽 *** 1-2. [수정] /api/start_dec 수정 *** 🔽
-@app.patch("/api/start_dec")
-def start_dec():
+@app.route("/api/start_dec_with_input", methods=["PATCH"])
+def start_dec_with_input():
     """
-    /api/set_game_word에서 설정된 'current_word' (전역 변수)를 *사용*하여
-    AI의 1차 진술을 생성합니다.
+    게임 시작 (1차 진술)을 사용자의 입력으로 트리거합니다.
+    사용자(일반 참가자)의 1차 진술을 컨텍스트로 AI들의 1차 진술을 생성합니다.
     """
-    global current_word, current_phase, user_messages, current_category
-    
-    # [수정] 프론트에서 카테고리를 받을 필요 없이, 이미 설정된 전역 변수(current_word)를 확인
-    if not current_word:
-        return jsonify({"error": "Word not set. Call /api/set_game_word first."}), 400
-        
-    current_phase = "진술"
+    try:
+        data = request.get_json(force=True)
+        room_code = data.get("room_code")
+        user_declaration = data.get("user_declaration") # 사용자의 1차 진술
 
-    # [핵심] AI에게 전역 변수 current_word를 전달하여 1차 진술 생성
-    messages = run_phase(current_word, current_phase)
-    
-    # 프론트엔드에 1차 진술 및 확인용 정보 반환
-    return jsonify({
-        "word": current_word,                 # (운영자 확인용)
-        "category": current_category,         # (운영자 확인용)
-        "declaration_messages": messages
-    })
-# 🔼 *** 1-2. 수정 완료 *** 🔼
+        if not room_code or room_code not in rooms:
+            return jsonify({"error": "Invalid room code"}), 400
+        if not user_declaration:
+            return jsonify({"error": "User declaration is missing"}), 400
+
+        room = rooms[room_code]
+        word = room["current_word"]
+
+        # 1차 진술 단계로 설정하고, 사용자 진술을 컨텍스트로 AI 응답 생성
+        room["current_phase"] = "진술"
+        ai_resp = run_phase(room_code, word, "진술", context_text=user_declaration)
+
+        return jsonify({
+            "ai_response": ai_resp,
+            "phase": "1차 진술",
+            "word": word
+        })
+
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
 
 # 🔵 토론 (AI 응답)
 # 🔽 *** 1-3. [수정 불필요 확인] /api/ai_response *** 🔽
-@app.patch("/api/ai_response")
-def ai_response():
+@app.route("/api/ai_response", methods=["PATCH"])
+def api_ai_response():
     """
-    이 함수는 이미 전역 변수 current_word를 사용하고 있으므로
-    수정할 필요가 없습니다.
+    일반적인 대화 라운드에서 사용자의 발언을 기반으로 AI 응답을 생성합니다.
     """
-    global current_word, current_phase
     try:
         data = request.get_json(force=True)
+        room_code = data.get("room_code")
         prompt = data.get("prompt")
-        phase = data.get("phase") or "토론"
+        phase_type = data.get("phase") # '진술' 또는 '토론'
 
-        if not current_word: # ⬅️ [확인] 전역 변수 사용
-            return jsonify({"error": "No word set yet"}), 400
+        if not room_code or room_code not in rooms:
+            return jsonify({"error": "Invalid room code"}), 400
+        if not prompt:
+            return jsonify({"error": "Prompt is missing"}), 400
 
-        # AI에게 전역 변수 current_word를 전달
-        ai_resp = run_phase(current_word, phase, context_text=prompt) # ⬅️ [확인] 전역 변수 사용
+        room = rooms[room_code]
+        word = room["current_word"]
+
+        # 다음 단계가 '토론'임을 명시 (run_phase에서 기록 업데이트에 사용)
+        room["current_phase"] = phase_type 
+        
+        # AI 응답 생성
+        ai_resp = run_phase(room_code, word, phase_type, context_text=prompt) 
 
         return jsonify({
             "ai_response": ai_resp,
-            "phase": phase,
-            "word": current_word
+            "phase": phase_type,
+            "word": word
         })
     except Exception as e:
         return jsonify({"error": str(e)}), 500
-
 
 @app.route("/next_round", methods=["POST"])
 def next_round():
