@@ -238,8 +238,6 @@
         let participantProfiles = {};
         let currentMessages = [];
         let roomListTimer = null;
-        let isCurrentUserAdmin = false; // 현재 사용자가 관리자인지 여부
-        let currentNameMapping = {};   // 현재 방의 이름 매핑 객체
         
         function showNotification(message, type = 'success', duration = 5000) {
             const notification = document.createElement('div');
@@ -249,7 +247,6 @@
             document.body.appendChild(notification);
             setTimeout(() => { notification.remove(); }, duration);
         }
-
         
         function listenToAvailableRooms() {
             if (roomListTimer) clearInterval(roomListTimer);
@@ -350,7 +347,6 @@
                     const adminRef = doc(db, "admins", user.uid);
                     const adminDoc = await getDoc(adminRef);
                     const isUserAdmin = adminDoc.exists();
-                    isCurrentUserAdmin = isUserAdmin;
 
                     if (isUserAdmin) {
                         createNewRoomBtn.classList.remove('hidden');
@@ -454,7 +450,6 @@
         }
         // 🔼 *** 2-1. 수정 완료 *** 🔼
     }
-
         startChatBtn.addEventListener('click', () => {
             (async () => {
                 if (!currentRoomId) return showNotification("방 ID가 없습니다.", "error");
@@ -619,8 +614,8 @@
 
         createNewRoomBtn.addEventListener('click', async () => {
             const newRoomId = Math.random().toString(36).substring(2, 8);
-            
-                
+            const topics = ["과일", "동물", "직업", "교통수단", "날씨"];
+            selectedTopic = topics[Math.floor(Math.random() * topics.length)];
 
             await setDoc(doc(db, 'chat_rooms', newRoomId), { 
                 createdAt: serverTimestamp(),
@@ -860,43 +855,24 @@
             const userBubble = renderSingleBubble({ text: userMessage, senderId: currentUser.uid });
             chatMessages.appendChild(userBubble);
             chatMessages.scrollTop = chatMessages.scrollHeight;
-            messageInput.value = ''; // 입력창 비우기
+            messageInput.value = '';
 
-            // 2. 백엔드 AI에게 응답 요청
+            // 백엔드에 메시지를 보내 AI 응답을 받음
             const aiResponse = await sendMessageToAI(userMessage);
-
-            // 3. (AI) 응답을 Firestore에 "저장"만 합니다. (렌더링 X)
-            // 🔽 *** [수정] 이 블록 전체를 수정합니다 *** 🔽
-            if (aiResponse && Array.isArray(aiResponse)) {
-                
-                // (이전 코드: aiResponse.forEach(msg, index) => { ...)
-                
-                // 4. (AI) 응답을 화면에 *수동으로* 렌더링 ⬅️ [삭제]
-                // const aiBubble = renderBubble(senderId, [{ text: msg }], false);
-                // chatMessages.appendChild(aiBubble); ⬅️ [삭제] 이 줄을 삭제합니다.
-
-                // 5. (AI) 응답 4개를 각각 Firestore에 "저장"만 합니다.
-                // 렌더링은 onSnapshot이 알아서 할 것입니다.
-                try {
-                    aiResponse.forEach((msg, index) => {
-                        const senderId = `ai_${index}`;
-                        addDoc(messagesRef, {
-                            text: msg,
-                            senderId: senderId,
-                            createdAt: serverTimestamp()
-                        });
+            if (aiResponse) {
+                // 만약 aiResponse가 배열이라면 각 메시지를 개별 말풍선으로 렌더링
+                if (Array.isArray(aiResponse)) {
+                    aiResponse.forEach(msg => {
+                        const aiBubble = renderSingleBubble({ text: msg, senderId: 'ai' });
+                        chatMessages.appendChild(aiBubble);
                     });
-                } catch (err) {
-                    console.error("Firestore에 AI 응답 저장 실패:", err);
+                } else {
+                    // 단일 응답의 경우
+                    const aiBubble = renderSingleBubble({ text: aiResponse, senderId: 'ai' });
+                    chatMessages.appendChild(aiBubble);
                 }
-                
-                // [참고] 스크롤 로직은 onSnapshot 안으로 이동했으므로 여기서 필요 없습니다.
-                // chatMessages.scrollTop = chatMessages.scrollHeight; ⬅️ [삭제]
-
-            } else {
-                showNotification("AI 응답을 가져오는 데 실패했습니다.", "error");
+                chatMessages.scrollTop = chatMessages.scrollHeight;
             }
-            // 🔼 *** [수정] 완료 *** 🔼
         });
         
         signupBtn.addEventListener('click', async () => {
