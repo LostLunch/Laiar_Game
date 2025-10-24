@@ -17,12 +17,11 @@ load_dotenv()
 # Flask 및 Socket.IO 초기화
 # ---------------------
 app = Flask(__name__, template_folder="templates")
-CORS(app) # CORS는 Socket.IO에서도 필요합니다.
-# ⚠️ Socket.IO 설정: 모든 Origin에서의 연결을 허용합니다.
+CORS(app) 
 socketio = SocketIO(app, cors_allowed_origins="*")
 
 # ---------------------
-# OpenAI 클라이언트 (기존과 동일)
+# OpenAI 클라이언트
 # ---------------------
 clients = []
 for i in range(1, 5):
@@ -33,396 +32,379 @@ for i in range(1, 5):
         class DummyClient:
             def chat(self): return self
             def completions(self): return self
-            def create(self): return {'choices': [{'message': {'content': '더미 응답: API 키 오류'}}]}
+            def create(self, **kwargs): 
+                return {
+                    'choices': [{'message': {'content': f'더미 응답: API 키 오류 (AI {i})'}}]
+                }
         clients.append(DummyClient())
 
 # ---------------------
-# 게임 데이터 (기존과 동일)
+# 게임 데이터
 # ---------------------
 categories = {
-    "동물": ['사자', '호랑이', '코끼리', '치타', '독수리'],
-    "음식": ['김치', '비빔밥', '떡볶이', '김밥', '사과'],
-    "교통수단": ['버스', '택시', '기차', '배', '비행기'],
-    "직업": ['경찰', '소방관', '판사', '선생님', '의사'],
-    "날씨": ['눈', '비', '바람', '안개', '맑음']
+    "음식": ["사과", "바나나", "딸기", "수박", "포도", "오렌지", "피자", "햄버거", "치킨", "라면", "김밥", "떡볶이", "짜장면", "초밥"],
+    "동물": ["강아지", "고양이", "호랑이", "사자", "코끼리", "기린", "원숭이", "토끼", "거북이", "악어", "펭귄", "북극곰", "판다"],
+    "사물": ["컴퓨터", "스마트폰", "텔레비전", "냉장고", "세탁기", "전자레인지", "책상", "의자", "침대", "시계", "자동차", "자전거"],
+    "장소": ["학교", "병원", "공원", "도서관", "영화관", "백화점", "마트", "경찰서", "소방서", "우체국", "은행", "공항", "지하철역"]
 }
-ai_names = ["AI-Alpha", "AI-Beta", "AI-Gamma", "AI-Delta"]
-personalities = [
-    "당신은 제시어를 알고 있으며, 거칠고 끈질기게 라이어를 추궁합니다.",
-    "당신은 제시어를 알고 있으며, 예리하고 논리적으로 추론합니다.",
-    "당신은 제시어를 알고 있으며, 교활하고 애매모호한 발언을 하여 라이어를 혼란시킵니다.",
-    "당신은 제시어를 알고 있으며, 재미있고 엉뚱한 비유를 사용하여 라이어를 방심하게 합니다."
-]
-# 프론트엔드와 페이즈(단계) 이름을 동기화합니다.
+rooms = {} # 메모리 기반 룸 저장소
 PHASES = ['1차 진술', '1차 토론', '2차 진술', '2차 토론', '투표']
 
 # ---------------------
-# 💡 핵심: 상태 관리
+# 도우미 함수
 # ---------------------
-# 모든 방의 상태를 이 딕셔너리에서 관리합니다.
-rooms = {}
+def generate_room_id(length=6):
+    return ''.join(random.choices(string.ascii_uppercase + string.digits, k=length))
 
-def generate_room_code(length=6):
-    """6자리 영문 대문자, 숫자로 구성된 방 코드 생성"""
-    characters = string.ascii_uppercase + string.digits
-    return ''.join(random.choice(characters) for i in range(length))
-
-def setting():
-    """제시어 랜덤 선택 (기존과 동일)"""
-    category = random.choice(list(categories.keys()))
-    word = random.choice(categories[category])
-    return category, word
-
-def init_room_state():
-    """
-    💡 [수정] 방 상태 초기화 함수
-    프론트엔드가 필요로 하는 모든 정보를 포함하도록 수정합니다.
-    """
-    return {
-        "players": [],      # 참가자 목록 (AI 포함)
-        "messages": [],     # 전체 채팅 기록
-        "ai_messages": [ [] for _ in range(4) ], # AI별 대화 기록 (GPT 컨텍스트용)
-        "current_word": None,
-        "current_category": None,
-        "phase": 0,         # 페이즈 인덱스 (0: 1차 진술, 1: 1차 토론...)
-        "liar_id": None,
-        "game_started": False,
-        "discussion_turns": 0 # 토론 턴 카운트용
-    }
+def get_game_words():
+    topic = random.choice(list(categories.keys()))
+    words = random.sample(categories[topic], 2)
+    return topic, words[0], words[1] # 주제, 라이어 단어, 시민 단어
 
 # ---------------------
-# 💡 핵심: AI 응답 생성 (run_phase 수정)
+# Socket.IO 이벤트 핸들러
 # ---------------------
-def run_phase(room_code, word, phase_str, context_text=None):
-    """
-    [수정] run_phase 함수:
-    전역 변수 대신 rooms[room_code]에서 상태를 읽고 쓰도록 수정
-    """
-    if room_code not in rooms:
-        raise ValueError(f"Room code {room_code} not found.")
-
-    room = rooms[room_code]
-    
-    system_base = f"당신은 라이어 게임 참가자입니다. 제시어는 '{word}'입니다. "
-    
-    # 1. 이전 대화 기록 추가 (phase=진술인 경우 초기화)
-    if phase_str == "진술":
-        system_phase = f"지금은 1차 진술 단계이며, 다른 참가자의 진술({context_text})을 들었습니다. 당신의 제시어('{word}')와 관련하여 추상적이거나 모호하게 발언하세요. 제시어를 직접 언급하지 마세요. 30자 내외로 짧게 답변하세요."
-        # AI의 이전 대화 기록 초기화
-        for i in range(4):
-            room["ai_messages"][i] = []
-            
-    else: # phase_str == "토론"
-        system_phase = f"지금은 {phase_str} 단계입니다. 다른 참가자들(AI, 라이어, 사용자)과의 자유 토론입니다. 가장 최근 발언({context_text})에 대해 반박, 동의, 또는 질문을 하세요. 30자 내외로 짧게 답변하세요."
-        # 모든 AI의 대화 기록에 사용자 메시지 추가
-        for i in range(4):
-            room["ai_messages"][i].append({"role": "user", "content": context_text})
-
-
-    def get_ai_response(client_index):
-        client = clients[client_index]
-        personality = personalities[client_index]
-        # 💡 [수정] 전역 변수 대신 room 상태에서 AI 기록을 가져옴
-        history = room["ai_messages"][client_index]
-        
-        system_prompt = system_base + personality + system_phase
-        
-        try:
-            messages = [{"role": "system", "content": system_prompt}] + history
-            
-            response = client.chat.completions.create(
-                model="gpt-4o-mini",
-                messages=messages,
-                max_tokens=100
-            )
-            ai_response = response.choices[0].message.content
-            # 💡 [수정] 전역 변수 대신 room 상태에 AI 응답을 기록
-            room["ai_messages"][client_index].append({"role": "assistant", "content": ai_response})
-            return ai_response
-            
-        except Exception as e:
-            print(f"GPT Client {client_index+1} Error: {e}")
-            return f"오류: {client_index+1}번 AI 응답 실패"
-
-    # 4명의 AI 응답을 병렬 처리 (기존과 동일)
-    with concurrent.futures.ThreadPoolExecutor() as executor:
-        futures = [executor.submit(get_ai_response, i) for i in range(4)]
-        ai_responses = [f.result() for f in futures]
-    
-    return ai_responses
-
-# ---------------------
-# 💡 핵심: Socket.IO 이벤트 핸들러
-# ---------------------
-
-def emit_room_state(room_id):
-    """[신규] 특정 방의 현재 상태를 모든 클라이언트에게 전송하는 헬퍼 함수"""
-    if room_id in rooms:
-        # 프론트엔드가 정의한 'roomStateUpdate' 이벤트로 현재 방 상태(rooms[room_id])를 보냅니다.
-        socketio.emit('roomStateUpdate', rooms[room_id], to=room_id)
-    else:
-        print(f"Attempted to emit state for non-existent room: {room_id}")
-
 @socketio.on('connect')
-def handle_connect():
-    """클라이언트 연결 시 로그"""
+def connect():
     print(f"Client connected: {request.sid}")
 
 @socketio.on('disconnect')
-def handle_disconnect():
-    """클라이언트 연결 해제 시 처리"""
+def disconnect():
     print(f"Client disconnected: {request.sid}")
-    
-    # 💡 [신규] 클라이언트가 어떤 방에 있었는지 찾아서 퇴장 처리
-    room_to_leave = None
-    player_to_remove = None
-    for room_id, room_data in rooms.items():
-        for player in room_data['players']:
-            if player.get('socketId') == request.sid:
-                room_to_leave = room_id
-                player_to_remove = player
-                break
-        if room_to_leave:
+    # 유저가 속한 방 찾아서 퇴장 처리
+    room_id_to_leave = None
+    user_id_to_leave = None
+    for room_id, room in rooms.items():
+        if room.get('operator_sid') == request.sid:
+            room_id_to_leave = room_id
+            user_id_to_leave = room['operator_id']
             break
-            
-    if room_to_leave and player_to_remove:
-        try:
-            room = rooms[room_to_leave]
-            room['players'].remove(player_to_remove)
-            print(f"Player {player_to_remove['name']} removed from room {room_to_leave}")
-            
-            # 방이 비었으면 방 삭제
-            if not any(p['isHuman'] for p in room['players']):
-                print(f"Room {room_to_leave} is empty, deleting.")
-                del rooms[room_to_leave]
-            else:
-                # 방이 비지 않았으면, 상태 업데이트 전송
-                emit_room_state(room_to_leave)
-                
-        except Exception as e:
-            print(f"Error during disconnect: {e}")
+        if room.get('user_sid') == request.sid:
+            room_id_to_leave = room_id
+            user_id_to_leave = room['user_id']
+            break
+    
+    if room_id_to_leave and user_id_to_leave:
+        handle_leave_room({'roomId': room_id_to_leave, 'userId': user_id_to_leave}, is_disconnect=True)
 
+def emit_room_state(room_id):
+    if room_id in rooms:
+        socketio.emit('roomState', rooms[room_id], to=room_id)
 
-@socketio.on('joinRoom')
-def handle_join_room(data):
-    """
-    [신규] 'joinRoom' 이벤트 핸들러 (기존 /api/set_game_word 대체)
-    프론트에서 { roomId, playerName, userId, socketId } 데이터를 받습니다.
-    """
-    room_id = data.get('roomId')
-    player_name = data.get('playerName')
+@socketio.on('create_room')
+def create_room(data):
     user_id = data.get('userId')
-    socket_id = request.sid # data.get('socketId') 대신 request.sid 사용 (더 신뢰성 높음)
-
-    if not room_id or not player_name or not user_id:
-        emit('roomError', {'message': '방 ID, 이름, 유저 ID가 필요합니다.'})
-        return
-
-    # 1. 방 생성 또는 찾기
-    if room_id not in rooms:
-        print(f"Creating new room: {room_id}")
-        rooms[room_id] = init_room_state()
-        
-        # [신규] 방 생성 시만 제시어 설정 (기존 set_game_word 로직)
-        category, word = setting()
-        rooms[room_id]["current_category"] = category
-        rooms[room_id]["current_word"] = word
-        
-    room = rooms[room_id]
-
-    # 2. 이미 시작된 게임인지 확인
-    if room['game_started']:
-        emit('roomError', {'message': '이미 시작된 게임입니다.'})
-        return
-        
-    # 3. 이미 참가한 유저인지 확인 (중복 참가 방지)
-    if any(p['id'] == user_id for p in room['players']):
-        # 이미 있는 유저의 socketId만 업데이트 (재접속 처리)
-        for p in room['players']:
-            if p['id'] == user_id:
-                p['socketId'] = socket_id
-                break
-    else:
-        # 새로운 플레이어 추가
-        new_player = {
-            "id": user_id,
-            "name": player_name,
-            "socketId": socket_id,
-            "isHuman": True,
-            "isLiar": False,
-            "role": "미정",
-            "keyword": "미정"
-        }
-        room['players'].append(new_player)
+    is_operator = data.get('isOperator', False) # 운영자(라이어)
     
-    # 4. Socket.IO 방에 참가
+    room_id = generate_room_id()
+    while room_id in rooms:
+        room_id = generate_room_id()
+
+    topic, liar_word, citizen_word = get_game_words()
+    
+    ai_players = []
+    for i in range(4):
+        ai_players.append({
+            "id": f"ai_{i+1}",
+            "name": f"AI 참가자 {i+1}",
+            "isLiar": False # AI는 라이어가 아님
+        })
+
+    rooms[room_id] = {
+        "id": room_id,
+        "topic": topic,
+        "liar_word": liar_word,
+        "citizen_word": citizen_word,
+        "operator_id": user_id, # 운영자가 라이어
+        "operator_sid": request.sid,
+        "user_id": None, # 참가자 (아직 없음)
+        "user_sid": None,
+        "ai_players": ai_players,
+        "messages": [
+            {
+                'id': f"msg_system_0",
+                'sender': 'system', 
+                'text': f"방이 생성되었습니다 (ID: {room_id}). 참가자를 기다립니다.",
+                'timestamp': datetime.now().isoformat()
+            }
+        ],
+        "phase": 0, # '1차 진술'
+        "turn": "user", # 1차 진술은 항상 'user' (참가자) 부터 시작
+        "discussion_turns": 0, # 1차, 2차 구분용
+        "ai_answers": [], # AI 답변 임시 저장소
+        "votes": {},
+        "phases_config": PHASES
+    }
     join_room(room_id)
-    print(f"Player {player_name} ({socket_id}) joined room {room_id}")
-    
-    # 5. [중요] 방의 모든 클라이언트에게 최신 상태 전송
     emit_room_state(room_id)
 
-
-@socketio.on('startDeclaration')
-def handle_start_declaration(data):
-    """
-    [신규] 'startDeclaration' 이벤트 핸들러 (게임 시작 트리거)
-    프론트에서 { roomId } 데이터를 받습니다.
-    """
+@socketio.on('join_room')
+def join_room_event(data):
     room_id = data.get('roomId')
+    user_id = data.get('userId')
+
     if room_id not in rooms:
-        emit('roomError', {'message': '존재하지 않는 방입니다.'})
+        emit('error', {'message': '존재하지 않는 방입니다.'})
         return
 
     room = rooms[room_id]
-    
-    if room['game_started']:
-        emit('roomError', {'message': '이미 시작된 게임입니다.'})
+    if room['user_id'] is not None:
+        emit('error', {'message': '방이 꽉 찼습니다.'})
         return
 
-    human_players = [p for p in room['players'] if p['isHuman']]
+    room['user_id'] = user_id
+    room['user_sid'] = request.sid
+    join_room(room_id)
     
-    if not human_players:
-        emit('roomError', {'message': '게임에 참가한 유저가 없습니다.'})
-        return
-        
-    # 1. 라이어 선정
-    liar_player = random.choice(human_players)
-    room['liar_id'] = liar_player['id']
-    word = room['current_word']
-    
-    # 2. 플레이어(사람) 역할 및 키워드 할당
-    for p in human_players:
-        if p['id'] == room['liar_id']:
-            p['isLiar'] = True
-            p['role'] = "라이어"
-            p['keyword'] = "???"
-        else:
-            p['isLiar'] = False
-            p['role'] = "시민"
-            p['keyword'] = word
-            
-    # 3. AI 플레이어 추가
-    for i in range(4):
-        ai_player = {
-            "id": f"ai_{i+1}",
-            "name": ai_names[i],
-            "isHuman": False,
-            "isLiar": False, # AI는 라이어가 될 수 없음
-            "role": "시민 (AI)",
-            "keyword": word # AI는 항상 제시어를 알고 있음
-        }
-        room['players'].append(ai_player)
-        
-    # 4. 게임 상태 변경
-    room['game_started'] = True
-    room['phase'] = 0 # 0 = 1차 진술
     room['messages'].append({
+        'id': f"msg_system_1",
         'sender': 'system', 
-        'text': f"게임이 시작되었습니다! 카테고리는 '{room['current_category']}'입니다. 1차 진술을 시작해주세요.",
+        'text': f"참가자(시민)가 입장했습니다. 게임을 시작합니다.",
+        'timestamp': datetime.now().isoformat()
+    })
+    room['messages'].append({
+        'id': f"msg_system_2",
+        'sender': 'system', 
+        'text': f"--- {PHASES[room['phase']]}이 시작되었습니다. ---",
         'timestamp': datetime.now().isoformat()
     })
     
-    # 5. [중요] 변경된 상태 전파
     emit_room_state(room_id)
 
-
-@socketio.on('chatMessage')
-def handle_chat_message(data):
-    """
-    [신규] 'chatMessage' 이벤트 핸들러 
-    (기존 /api/start_dec_with_input 및 /api/ai_response 통합)
-    """
+@socketio.on('leave_room')
+def handle_leave_room(data, is_disconnect=False):
     room_id = data.get('roomId')
-    text = data.get('text')
-    sender_name = data.get('sender')
+    user_id = data.get('userId')
     
     if room_id not in rooms:
-        emit('roomError', {'message': '존재하지 않는 방입니다.'})
         return
         
     room = rooms[room_id]
     
-    # 1. 사용자 메시지를 채팅 기록에 추가
-    room['messages'].append({
-        'sender': sender_name,
+    # 방 자체를 삭제 (운영자가 나갈 경우)
+    if user_id == room['operator_id']:
+        room['messages'].append({
+            'id': f"msg_system_exit_op",
+            'sender': 'system', 
+            'text': f"운영자(라이어)가 방을 나갔습니다. 게임이 종료됩니다.",
+            'timestamp': datetime.now().isoformat()
+        })
+        emit_room_state(room_id)
+        # 룸 삭제
+        if room_id in rooms:
+            del rooms[room_id]
+            
+    # 참가자만 내보내기
+    elif user_id == room['user_id']:
+        room['user_id'] = None
+        room['user_sid'] = None
+        room['messages'].append({
+            'id': f"msg_system_exit_user",
+            'sender': 'system', 
+            'text': f"참가자(시민)가 방을 나갔습니다.",
+            'timestamp': datetime.now().isoformat()
+        })
+        if not is_disconnect:
+            leave_room(room_id)
+        emit_room_state(room_id)
+
+
+@socketio.on('send_message')
+def send_message(data):
+    room_id = data.get('roomId')
+    user_id = data.get('userId')
+    text = data.get('text')
+
+    if room_id not in rooms:
+        return
+        
+    room = rooms[room_id]
+    
+    sender_type = 'unknown'
+    if user_id == room['operator_id']:
+        sender_type = 'operator'
+    elif user_id == room['user_id']:
+        sender_type = 'user'
+
+    new_message = {
+        'id': f"msg_{datetime.now().isoformat()}_{random.randint(1000, 9999)}",
+        'sender': user_id,
+        'sender_type': sender_type,
         'text': text,
         'timestamp': datetime.now().isoformat()
-    })
+    }
     
-    # 2. 사용자 메시지를 즉시 클라이언트에 전파 (빠른 응답)
-    emit_room_state(room_id)
-    
-    # 3. AI 처리 중 알림 (프론트 UI 로딩 표시용)
-    socketio.emit('aiProcessing', {'status': 'start'}, to=room_id)
-    
-    try:
-        current_phase_index = room['phase']
-        phase_name = PHASES[current_phase_index] # '1차 진술', '1차 토론' 등
-        word = room['current_word']
+    phase_name = PHASES[room['phase']]
+
+    # 💡 [추가] '토론' 페이즈 로직
+    if '토론' in phase_name:
+        # 토론 중에는 메시지만 추가하고 턴 변경 없이 전파
+        room['messages'].append(new_message)
+        emit_room_state(room_id)
+        return # '진술' 로직을 실행하지 않고 종료
+
+    # --- '진술' 페이즈 로직 ---
+    current_turn = room.get('turn')
+
+    if current_turn == 'user' and user_id == room['user_id']:
+        # 1. 유저(시민) 메시지 추가
+        room['messages'].append(new_message)
+        # 2. 턴을 운영자(라이어)에게 넘김
+        room['turn'] = 'operator'
+        # 3. AI 답변 생성 (백그라운드)
+        socketio.start_background_task(async_generate_ai_answers, room_id)
+        # 4. 상태 전파 (유저 메시지 보임, 턴이 운영자에게 넘어감)
+        emit_room_state(room_id) 
+
+    elif current_turn == 'operator' and user_id == room['operator_id']:
+        # 1. 운영자(라이어) 메시지를 '진술' 객체로 만듦 (DB엔 아직 추가X)
+        operator_statement = {
+            'sender': room['operator_id'], 
+            'sender_type': 'operator', 
+            'text': text 
+        }
+
+        # 2. AI 답변이 준비되었는지 확인
+        if 'ai_answers' not in room or not room['ai_answers']:
+            print(f"Warning: Operator sent message but AI answers are not ready in room {room_id}.")
+            # AI 답변이 없으면, 운영자 메시지만이라도 추가하고 턴을 넘기지 않음.
+            # (AI가 응답할 때까지 운영자 턴 유지)
+            room['messages'].append(new_message)
+            emit_room_state(room_id)
+            return
+
+        # 3. [버그 수정] 운영자 진술(dict) + AI 진술(dict list)
+        all_statements = [operator_statement] + room['ai_answers']
+        random.shuffle(all_statements)
+
+        # 4. 섞인 진술들을 완전한 메시지 객체로 변환
+        shuffled_messages = []
+        for stmt in all_statements:
+            shuffled_messages.append({
+                'id': f"msg_{datetime.now().isoformat()}_{random.randint(1000, 9999)}",
+                'sender': stmt['sender'],
+                'sender_type': stmt['sender_type'],
+                'text': stmt['text'],
+                'timestamp': datetime.now().isoformat()
+            })
         
-        # 4. 현재 페이즈에 맞춰 AI 응답 생성
-        # (run_phase가 '진술' 또는 '토론' 문자열을 받도록 설계되어 있음)
-        phase_type_for_ai = "진술" if "진술" in phase_name else "토론"
+        # 5. 섞인 메시지들을 DB에 추가
+        room['messages'].extend(shuffled_messages)
+        room['ai_answers'] = [] # 임시 답변 초기화
         
-        ai_responses = run_phase(room_id, word, phase_type_for_ai, context_text=text)
+        # 6. 페이즈 진행
+        room['phase'] += 1
         
-        # 5. AI 응답을 채팅 기록에 추가
-        ai_players = [p for p in room['players'] if not p['isHuman']]
-        for i, resp in enumerate(ai_responses):
-            if i < len(ai_players):
-                room['messages'].append({
-                    'sender': ai_players[i]['name'],
-                    'text': resp,
-                    'timestamp': datetime.now().isoformat()
-                })
-        
-        # 6. 페이즈(단계) 전환 로직
-        if "진술" in phase_name:
-            # 진술 단계는 한 턴 후 바로 다음 토론 단계로 넘어감
-            room['phase'] += 1
-            room['discussion_turns'] = 0 # 토론 턴 카운트 초기화
+        if room['phase'] < len(PHASES):
+            next_phase_name = PHASES[room['phase']]
             room['messages'].append({
+                'id': f"msg_system_phase_{room['phase']}",
                 'sender': 'system', 
-                'text': f"--- {PHASES[room['phase']]}이 시작되었습니다. ---",
+                'text': f"--- {next_phase_name}이 시작되었습니다. ---",
                 'timestamp': datetime.now().isoformat()
             })
             
-        elif "토론" in phase_name:
-            # 토론 단계는 N턴(예: 3턴) 후 다음 진술 단계로 넘어감
-            room['discussion_turns'] += 1
+            # 💡 [수정] 다음 페이즈에 따라 턴 설정
+            if '진술' in next_phase_name:
+                room['turn'] = 'user' # 다음 '진술'은 다시 유저부터
+            elif '토론' in next_phase_name:
+                room['turn'] = 'discussion' # '토론' 턴 (모두 가능)
+            else:
+                room['turn'] = 'voting' # '투표' 턴
+        
+        else:
+            # TODO: 모든 페이즈 종료 -> 투표 시작
+            room['turn'] = 'voting'
+            room['messages'].append({
+                'id': f"msg_system_vote",
+                'sender': 'system', 
+                'text': f"--- 모든 토론이 종료되었습니다. 투표를 시작합니다. (투표 기능 미구현) ---",
+                'timestamp': datetime.now().isoformat()
+            })
+
+        # 7. 최종 상태 전파
+        emit_room_state(room_id)
+
+
+# ---------------------
+# AI 답변 생성 (백그라운드)
+# ---------------------
+def async_generate_ai_answers(room_id):
+    socketio.emit('aiProcessing', {'status': 'start'}, to=room_id)
+    
+    room = rooms.get(room_id)
+    if not room:
+        socketio.emit('aiProcessing', {'status': 'end'}, to=room_id)
+        return
+
+    try:
+        topic = room['topic']
+        citizen_word = room['citizen_word']
+        chat_history = room['messages']
+        
+        # AI들에게 보낼 프롬프트 생성 (시민 단어 전달)
+        # (AI는 라이어가 아니므로 시민 단어를 받음)
+        base_prompt = f"""
+        당신은 라이어 게임에 참가한 AI 참가자입니다.
+        게임 주제: {topic}
+        당신이 받은 단어: {citizen_word}
+        현재까지의 대화 내용:
+        {json.dumps(chat_history[-5:], ensure_ascii=False)}
+        
+        당신은 라이어가 아닙니다. 
+        '{citizen_word}' 단어에 대해 사람들이 의심하지 않도록 자연스럽게 한 문장으로 설명하세요.
+        라이어에게 단어를 들키지 않도록 너무 직접적인 설명은 피하세요.
+        답변만 간결하게 한 문장으로 생성하세요.
+        """
+        
+        ai_players = room['ai_players']
+        
+        def generate_answer(client, ai_id, prompt):
+            try:
+                response = client.chat.completions.create(
+                    model="gpt-4o-mini",
+                    messages=[{"role": "user", "content": prompt}],
+                    max_tokens=100
+                )
+                response_text = response.choices[0].message.content.strip()
+                # 💡 [버그 수정] AI 답변을 단순 문자열이 아닌 '진술 객체(dict)'로 반환
+                return {
+                    'sender': ai_id,
+                    'sender_type': 'ai',
+                    'text': response_text
+                }
+            except Exception as e:
+                print(f"Error for AI {ai_id}: {e}")
+                return {
+                    'sender': ai_id,
+                    'sender_type': 'ai',
+                    'text': f"(AI {ai_id} 답변 생성 오류)"
+                }
+
+        # 4개의 AI 클라이언트로 동시에 답변 생성 요청
+        with concurrent.futures.ThreadPoolExecutor(max_workers=4) as executor:
+            # 💡 [수정] AI ID와 클라이언트를 매핑하여 전달
+            futures = [
+                executor.submit(generate_answer, clients[i], ai_players[i]['id'], base_prompt) 
+                for i in range(len(ai_players))
+            ]
             
-            # 💡 예시: 1차 토론(인덱스 1)에서 3턴, 2차 토론(인덱스 3)에서 3턴 진행
-            turns_limit = 3 
-            if room['discussion_turns'] >= turns_limit:
-                room['phase'] += 1 # 다음 단계로 (2차 진술 또는 투표)
-                room['discussion_turns'] = 0 # 턴 초기화
-                
-                if room['phase'] < len(PHASES):
-                    room['messages'].append({
-                        'sender': 'system', 
-                        'text': f"--- {PHASES[room['phase']]}이 시작되었습니다. ---",
-                        'timestamp': datetime.now().isoformat()
-                    })
-                else:
-                    # TODO: 투표 로직
-                    room['messages'].append({
-                        'sender': 'system', 
-                        'text': f"--- 모든 토론이 종료되었습니다. 투표를 시작합니다. (미구현) ---",
-                        'timestamp': datetime.now().isoformat()
-                    })
+            results = [future.result() for future in concurrent.futures.as_completed(futures)]
+        
+        # 💡 [버그 수정] AI 답변(dict 리스트)을 룸에 저장
+        room['ai_answers'] = results
 
     except Exception as e:
         print(f"Error during AI processing: {e}")
         room['messages'].append({
+            'id': f"msg_system_ai_error",
             'sender': 'system', 
             'text': f"AI 응답 생성 중 오류가 발생했습니다: {e}",
             'timestamp': datetime.now().isoformat()
         })
+        emit_room_state(room_id) # 오류 상태 전파
     
-    # 7. AI 응답 및 페이즈 변경이 완료된 '최종' 상태를 전파
-    emit_room_state(room_id)
-    # 8. AI 처리 완료 알림 (프론트 UI 로딩 종료용)
+    # 7. AI 응답 생성이 완료되었음을 알림
     socketio.emit('aiProcessing', {'status': 'end'}, to=room_id)
 
 
@@ -430,7 +412,8 @@ def handle_chat_message(data):
 # Flask 서버 실행
 # ---------------------
 if __name__ == "__main__":
-    # 💡 [중요] app.run() 대신 socketio.run()을 사용해야 합니다.
-    # host='0.0.0.0'을 사용해야 다른 노트북(로컬 네트워크)에서 접속 가능합니다.
-    print("Starting Socket.IO server on http://10.198.137.44:5000")
-    socketio.run(app, debug=True, host='10.198.137.44', port=5000)
+    print("Starting Flask-SocketIO server...")
+    # 💡 [설정] 부스에서 사용할 것이므로 0.0.0.0으로 열어서
+    # 동일 네트워크의 다른 기기(플레이어 폰 등)가 접속할 수 있게 함
+    socketio.run(app, debug=True, host='0.0.0.0', port=5000)
+
