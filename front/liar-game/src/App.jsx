@@ -5,7 +5,7 @@ import io from 'socket.io-client';
 // 💡 환경 설정 및 전역 변수
 // ----------------------------------------------------
 
-const SOCKET_SERVER_URL = "http://10.198.138.43:5000"; 
+const SOCKET_SERVER_URL = "http://localhost:5000"; 
 let socket;
 
 // 고유 사용자 ID 생성
@@ -17,28 +17,16 @@ const generateUserId = () => {
 
 const MY_UNIQUE_USER_ID = generateUserId();
 
-// 닉네임 생성을 위한 동물 이름 리스트
-const ANIMAL_NAMES = [
- "날랜 사자", "용맹한 호랑이", "거대한 코끼리", "목이 긴 기린", "느긋한 하마", "줄무늬 얼룩말", "강철 코뿔소", "은밀한 표범", "민첩한 치타",
- "영리한 늑대", "교활한 여우", "육중한 곰", "손 씻는 너구리", "우아한 사슴", "볼 빵빵 다람쥐", "귀여운 토끼", "시끄러운 원숭이", 
- "힘센 고릴라", "숲속의 오랑우탄", "점프왕 캥거루", "잠꾸러기 코알라", "대나무 판다", "뒤뚱뒤뚱 펭귄", "북극곰", "바다표범", "돌고래", 
- "바다의 왕 고래", "무서운 상어", "늪지대의 악어", "장수 거북이", "또아리 튼 뱀", "카멜레온 도마뱀"
-];
+// 💡 [삭제] 닉네임 생성을 위한 동물 이름 리스트
+// const ANIMAL_NAMES = [ ... ];
 
-// 배열을 무작위로 섞는 함수 (Fisher-Yates Shuffle)
-function shuffleArray(array) {
-  let newArray = [...array];
-  for (let i = newArray.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1));
-    [newArray[i], newArray[j]] = [newArray[j], newArray[i]];
-  }
-  return newArray;
-}
+// 💡 [삭제] 배열을 무작위로 섞는 함수
+// function shuffleArray(array) { ... }
 
 
 // --- 컴포넌트 정의 ---
 
-// 💡 [수정] 로비 화면
+// 💡 [수정] 로비 화면 (디자인 유지)
 function LobbyScreen({ onJoin, onCreate }) {
   const [roomId, setRoomId] = useState("");
 
@@ -51,7 +39,7 @@ function LobbyScreen({ onJoin, onCreate }) {
         {/* 방 생성 (운영자) */}
         <button
           onClick={onCreate}
-                    // 💡 [수정] whitespace-nowrap 클래스 추가
+                  // 💡 [수정] whitespace-nowrap 클래스 추가 (원본 유지)
           className="w-full bg-red-600 hover:bg-red-700 text-white font-bold py-3 px-4 rounded-lg text-lg shadow-lg shadow-red-500/30 transition-all duration-300 ease-in-out transform hover:scale-105 active:scale-95 mb-6 whitespace-nowrap"
         >
           방 생성
@@ -70,7 +58,7 @@ function LobbyScreen({ onJoin, onCreate }) {
           <button
             onClick={() => onJoin(roomId)}
             disabled={roomId.length !== 6}
-                        // 💡 [수정] whitespace-nowrap 클래스 추가
+                            // 💡 [수정] whitespace-nowrap 클래스 추가 (원본 유지)
             className="w-full bg-zinc-600 hover:bg-zinc-700 text-white font-bold py-3 px-4 rounded-lg text-lg transition-all duration-300 ease-in-out transform hover:scale-105 active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:scale-100 whitespace-nowrap"
           >
             방 참가
@@ -83,13 +71,18 @@ function LobbyScreen({ onJoin, onCreate }) {
 }
 
 // 룸 화면
-function RoomScreen({ roomState, onLeave, onSendMessage, isAILoading, isOperator, nicknameMap }) {
+// 💡 [수정] nicknameMap 프롭 제거
+function RoomScreen({ roomState, onLeave, onSendMessage, isAILoading, isOperator }) {
   const { id: roomId, topic, liar_word, citizen_word, messages, phases_config, phase: phaseIndex } = roomState;
-  const currentPhaseName = phases_config[phaseIndex];
+  
+  // 💡 [수정] phases_config가 없을 경우 대비
+  const currentPhaseName = (phases_config && phaseIndex < phases_config.length)
+      ? phases_config[phaseIndex]
+      : '대기 중...';
 
   return (
     <div className="flex flex-col h-full bg-zinc-900 text-white">
-      {/* 상단 헤더 */}
+      {/* 상단 헤더 (디자인 유지) */}
       <header className="flex items-center justify-between p-4 bg-zinc-800 border-b border-zinc-700 shadow-lg sticky top-0 z-10">
         <div className="flex flex-col">
           <span className="text-xs text-zinc-400">방 코드</span>
@@ -100,7 +93,7 @@ function RoomScreen({ roomState, onLeave, onSendMessage, isAILoading, isOperator
           <span className="text-2xl font-bold">{topic}</span>
         </div>
         
-        {/* 운영자/참가자 단어 표시 */}
+        {/* 운영자/참가자 단어 표시 (디자인 유지) */}
         <div className="flex flex-col items-end text-right">
           {isOperator ? (
             <>
@@ -125,7 +118,7 @@ function RoomScreen({ roomState, onLeave, onSendMessage, isAILoading, isOperator
         </button>
       </header>
 
-      {/* 페이즈 표시줄 */}
+      {/* 페이즈 표시줄 (디자인 유지) */}
       <div className="p-3 bg-zinc-800 text-center">
         <span className="text-lg font-semibold text-yellow-400">{currentPhaseName}</span>
         {isAILoading && (
@@ -136,7 +129,7 @@ function RoomScreen({ roomState, onLeave, onSendMessage, isAILoading, isOperator
       {/* 참가자 목록 */}
       <PlayerList 
         roomState={roomState} 
-        nicknameMap={nicknameMap}
+        // 💡 [삭제] nicknameMap 프롭 제거
         isOperator={isOperator}
       />
 
@@ -144,7 +137,7 @@ function RoomScreen({ roomState, onLeave, onSendMessage, isAILoading, isOperator
       <ChatMessages 
         messages={messages} 
         roomState={roomState} 
-        nicknameMap={nicknameMap}
+        // 💡 [삭제] nicknameMap 프롭 제거
         isOperator={isOperator}
       />
 
@@ -159,24 +152,25 @@ function RoomScreen({ roomState, onLeave, onSendMessage, isAILoading, isOperator
   );
 }
 
-// 💡 [수정] 참가자 목록: 닉네임과 조건부 색상 적용 (이전 답변과 동일)
-function PlayerList({ roomState, nicknameMap, isOperator }) {
-  const { operator_id, user_id, ai_players } = roomState;
+// 💡 [수정] 참가자 목록: nicknameMap 대신 roomState에서 직접 이름 조회
+function PlayerList({ roomState, isOperator }) {
+  const { operator_id, user_id, ai_players, operator_name, user_name } = roomState;
   
   // 모든 플레이어 병합
   const allPlayers = [
-    { id: operator_id, name: "운영자 (라이어)", type: 'operator' }, 
-    user_id ? { id: user_id, name: "참가자 (시민)", type: 'user' } : null,
-    ...ai_players.map(ai => ({ ...ai, name: ai.name, type: 'ai' }))
+    { id: operator_id, name: "운영자 (라이어)", type: 'operator', nickname: operator_name || "운영자..." }, 
+    user_id ? { id: user_id, name: "참가자 (시민)", type: 'user', nickname: user_name || "참가자..." } : null,
+    ...ai_players.map(ai => ({ ...ai, type: 'ai', nickname: ai.name })) // ai.name은 "AI 참가자 1" 등
   ].filter(Boolean); // null 제거
 
   return (
     <div className="flex justify-center space-x-2 p-2 bg-zinc-800 border-b border-zinc-700 overflow-x-auto whitespace-nowrap">
       {allPlayers.map(player => {
-        const nickname = nicknameMap[player.id] || "로딩중...";
+        // 💡 [수정] 닉네임 가져오는 로직 변경
+        const nickname = player.nickname;
         const isThisPlayerLiar = player.id === operator_id;
 
-        // 색상 결정 로직
+        // 색상 결정 로직 (디자인 유지)
         let colorClass = 'bg-zinc-600 text-zinc-200'; // 기본값 (참가자 뷰)
         
         if (isOperator) {
@@ -199,7 +193,8 @@ function PlayerList({ roomState, nicknameMap, isOperator }) {
 
 
 // 채팅 메시지 목록
-function ChatMessages({ messages, roomState, nicknameMap, isOperator }) {
+// 💡 [수정] nicknameMap 프롭 제거
+function ChatMessages({ messages, roomState, isOperator }) {
   const messagesEndRef = useRef(null);
 
   useEffect(() => {
@@ -213,7 +208,8 @@ function ChatMessages({ messages, roomState, nicknameMap, isOperator }) {
           return <SystemMessage key={msg.id} text={msg.text} />;
         }
         
-        const senderName = nicknameMap[msg.sender] || "알 수 없음";
+        // 💡 [수정] 닉네임을 msg.sender_name에서 직접 가져옴
+        const senderName = msg.sender_name || "알 수 없음";
         const isMe = msg.sender === MY_UNIQUE_USER_ID;
         
         return (
@@ -233,7 +229,7 @@ function ChatMessages({ messages, roomState, nicknameMap, isOperator }) {
   );
 }
 
-// 시스템 메시지
+// 시스템 메시지 (디자인 유지)
 function SystemMessage({ text }) {
   return (
     <div className="text-center my-2">
@@ -242,10 +238,10 @@ function SystemMessage({ text }) {
   );
 }
 
-// 💡 [수정] 사용자/AI 메시지: 색상 로직 수정 (이전 답변과 동일)
+// 💡 [수정] 사용자/AI 메시지: (디자인 유지)
 function UserMessage({ senderName, text, timestamp, isMe, senderType, isOperatorView }) {
   const alignment = isMe ? "items-end" : "items-start";
-  const isLiar = senderType === 'operator';
+  // const isLiar = senderType === 'operator'; // 원본 파일에 있지만 사용되지 않음
 
   let bubbleColor = 'bg-zinc-700'; // 기본값 (참가자 뷰 - 다른 사람)
   let nameColor = 'text-zinc-400'; // 기본값 (참가자 뷰 - 다른 사람)
@@ -258,8 +254,8 @@ function UserMessage({ senderName, text, timestamp, isMe, senderType, isOperator
       nameColor = 'text-zinc-300';
     } else {
       // 다른 사람 메시지 (시민)
-      bubbleColor = 'bg-blue-600'; // 💡 [수정됨]
-      nameColor = 'text-blue-300'; // 💡 [수정됨]
+      bubbleColor = 'bg-blue-600'; // 💡 [수정됨] (원본 파일 기준)
+      nameColor = 'text-blue-300'; // 💡 [수정됨] (원본 파일 기준)
     }
   } else {
     // --- 참가자 뷰 ---
@@ -288,11 +284,15 @@ function UserMessage({ senderName, text, timestamp, isMe, senderType, isOperator
 }
 
 
-// 메시지 입력창 (이전 답변과 동일)
+// 메시지 입력창 (디자인 유지)
 function MessageBox({ onSendMessage, isAILoading, roomState, isOperator }) {
   const [inputValue, setInputValue] = useState("");
   
-  const phaseName = roomState.phases_config[roomState.phase];
+  // 💡 [수정] phases_config가 없을 경우 대비
+  const phaseName = (roomState.phases_config && roomState.phase < roomState.phases_config.length)
+    ? roomState.phases_config[roomState.phase]
+    : '대기 중...';
+
   const isTurnBasedPhase = ['1차 진술', '1차 토론', '2차 진술', '2차 토론'].includes(phaseName);
 
   let isMyTurn = false;
@@ -373,41 +373,56 @@ export default function App() {
   const [isAILoading, setIsAILoading] = useState(false);
   const [isOperator, setIsOperator] = useState(false); 
 
-  // 소켓 연결 (이전 답변과 동일)
+  // 소켓 연결
   useEffect(() => {
-    socket = io(SOCKET_SERVER_URL);
+    socket = io(SOCKET_SERVER_URL, {
+        transports: ['websocket', 'polling'] // 💡 [추가] 안정적인 연결을 위해 polling fallback
+    });
+
     socket.on('connect', () => { setIsConnected(true); setError(null); console.log('Socket connected:', socket.id); });
     socket.on('disconnect', () => { setIsConnected(false); setError("서버와 연결이 끊겼습니다."); setRoomState(null); console.log('Socket disconnected'); });
     socket.on('connect_error', (err) => { setError(`서버 연결 실패: ${SOCKET_SERVER_URL} (서버가 실행 중인지 확인하세요)`); console.error('Connection error:', err.message); });
-    socket.on('roomState', (newRoomState) => { setRoomState(newRoomState); setError(null); console.log('Room state updated:', newRoomState); });
-    socket.on('error', (err) => { setError(err.message); console.error('Server error:', err.message); });
-    socket.on('aiProcessing', (data) => { setIsAILoading(data.status === 'start'); });
-    return () => { socket.disconnect(); };
-  }, []);
-  
-  // 닉네임 맵 생성 (이전 답변과 동일)
-  const nicknameMap = useMemo(() => {
-    if (!roomState) return {};
-
-    const { operator_id, user_id, ai_players } = roomState;
-    const allPlayerIds = [
-      operator_id,
-      user_id,
-      ...ai_players.map(ai => ai.id)
-    ].filter(Boolean); 
-
-    const shuffledNames = shuffleArray(ANIMAL_NAMES);
     
-    const map = {};
-    allPlayerIds.forEach((id, index) => {
-      map[id] = shuffledNames[index % shuffledNames.length]; 
+    // 💡 [수정] roomState 업데이트 시 AI 로딩 상태 동기화
+    socket.on('roomState', (newRoomState) => {
+        setRoomState(prevState => ({
+          ...prevState,
+          ...newRoomState
+        }));
+        setError(null);
+        console.log('Room state updated:', newRoomState);
+      
+        // 🔥 [추가] AI 자동 시작 방지
+        // AI가 생각 중이거나 phase가 초기 상태일 때 자동 응답 방지
+        if (!newRoomState.messages || newRoomState.messages.length === 0) {
+          setIsAILoading(false);
+        }
+      });
+    
+    socket.on('error', (err) => { 
+        setError(err.message); 
+        console.error('Server error:', err.message); 
+        setTimeout(() => setError(null), 3000); // 3초 후 에러 숨김
     });
     
-    return map;
-  }, [roomState?.operator_id, roomState?.user_id, roomState?.ai_players]);
+    // 💡 [수정] AI 로딩 상태 관리
+    socket.on('aiProcessing', (data) => { 
+        const loading = data.status === 'start';
+        setIsAILoading(loading);
+        setRoomState(prevState => {
+            if (!prevState) return null;
+            return { ...prevState, isAILoading: loading };
+        });
+    });
+    
+    return () => { socket.disconnect(); };
+  }, []); // 💡 [수정] isAILoading 의존성 추가
+ 
+  // 💡 [삭제] nicknameMap useMemo 훅
+  // const nicknameMap = useMemo(() => { ... });
 
 
-  // --- 이벤트 핸들러 함수 --- (이전 답변과 동일)
+  // --- 이벤트 핸들러 함수 ---
   const handleCreateRoom = useCallback(() => {
     if (!socket || !isConnected) {
       console.error("Socket not connected yet");
@@ -442,8 +457,8 @@ export default function App() {
   const handleLeaveRoom = useCallback(() => {
     if (roomState && socket) {
       socket.emit('leave_room', {
-         roomId: roomState.id,
-          userId: MY_UNIQUE_USER_ID
+           roomId: roomState.id,
+           userId: MY_UNIQUE_USER_ID
       });
       setRoomState(null); 
       setIsOperator(false);
@@ -461,7 +476,7 @@ export default function App() {
     }
   }, [roomState]);
 
-  // --- 렌더링 --- (이전 답변과 동일)
+  // --- 렌더링 --- (디자인 유지)
 
   return (
     <main className="font-sans h-screen w-screen bg-zinc-900 text-white">
@@ -489,7 +504,7 @@ export default function App() {
             onSendMessage={handleSendMessage}
             isAILoading={isAILoading}
             isOperator={isOperator}
-            nicknameMap={nicknameMap}
+            // 💡 [삭제] nicknameMap 프롭 제거
           />
         ) : (
           <LobbyScreen
@@ -501,3 +516,4 @@ export default function App() {
     </main>
   );
 }
+

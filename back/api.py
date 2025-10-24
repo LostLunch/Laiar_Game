@@ -1,3 +1,7 @@
+import eventlet
+
+eventlet.monkey_patch()
+
 import os
 import random
 import string
@@ -11,6 +15,7 @@ from flask_socketio import SocketIO, emit, join_room, leave_room
 from openai import OpenAI
 from dotenv import load_dotenv
 
+
 load_dotenv()
 
 # ---------------------
@@ -18,7 +23,7 @@ load_dotenv()
 # ---------------------
 app = Flask(__name__, template_folder="templates")
 CORS(app) 
-socketio = SocketIO(app, cors_allowed_origins="*")
+socketio = SocketIO(app, cors_allowed_origins="*", async_mode="eventlet")
 
 # ---------------------
 # OpenAI 클라이언트
@@ -50,6 +55,14 @@ categories = {
 rooms = {} # 메모리 기반 룸 저장소
 PHASES = ['1차 진술', '1차 토론', '2차 진술', '2차 토론', '투표']
 
+# 💡 [추가] 프론트에서 가져온 닉네임 리스트
+ANIMAL_NAMES = [
+    "날랜 사자", "용맹한 호랑이", "거대한 코끼리", "목이 긴 기린", "느긋한 하마", "줄무늬 얼룩말", "강철 코뿔소", "은밀한 표범", "민첩한 치타",
+    "영리한 늑대", "교활한 여우", "육중한 곰", "손 씻는 너구리", "우아한 사슴", "볼 빵빵 다람쥐", "귀여운 토끼", "시끄러운 원숭이", 
+    "힘센 고릴라", "숲속의 오랑우탄", "점프왕 캥거루", "잠꾸러기 코알라", "대나무 판다", "뒤뚱뒤뚱 펭귄", "북극곰", "바다표범", "돌고래", 
+    "바다의 왕 고래", "무서운 상어", "늪지대의 악어", "장수 거북이", "또아리 튼 뱀", "카멜레온 도마뱀"
+]
+
 # ---------------------
 # 도우미 함수
 # ---------------------
@@ -60,6 +73,11 @@ def get_game_words():
     topic = random.choice(list(categories.keys()))
     words = random.sample(categories[topic], 2)
     return topic, words[0], words[1] # 주제, 라이어 단어, 시민 단어
+
+# 💡 [오류 수정] 헬스 체크를 위한 기본 HTTP 루트 추가
+@app.route('/')
+def index():
+    return "Liar Game Server is running."
 
 # ---------------------
 # Socket.IO 이벤트 핸들러
@@ -102,6 +120,13 @@ def create_room(data):
 
     topic, liar_word, citizen_word = get_game_words()
     
+    # 💡 [수정] 닉네임 생성을 위해 이름 풀 복사
+    available_names = ANIMAL_NAMES[:]
+    
+    # 💡 [수정] 운영자 닉네임 할당
+    operator_name = random.choice(available_names)
+    available_names.remove(operator_name) # 중복 제거
+    
     ai_players = []
     # 💡 [추가] AI 성격 정의
     personalities = [
@@ -112,9 +137,13 @@ def create_room(data):
     ]
 
     for i in range(4):
+        # 💡 [수정] AI에게도 랜덤 동물 닉네임 할당
+        ai_name = random.choice(available_names)
+        available_names.remove(ai_name) # 중복 제거
+        
         ai_players.append({
             "id": f"ai_{i+1}",
-            "name": f"AI 참가자 {i+1}",
+            "name": ai_name, # 💡 [수정] AI 이름 저장
             "isLiar": False, # AI는 라이어가 아님
             "personality": personalities[i] # 💡 [추가] 성격 할당
         })
@@ -126,13 +155,16 @@ def create_room(data):
         "citizen_word": citizen_word,
         "operator_id": user_id, # 운영자가 라이어
         "operator_sid": request.sid,
+        "operator_name": operator_name, # 💡 [추가] 운영자 닉네임 저장
         "user_id": None, # 참가자 (아직 없음)
         "user_sid": None,
-        "ai_players": ai_players, # 💡 [수정] 성격이 포함된 AI 정보
+        "user_name": None, # 💡 [추가] 참가자 닉네임 (아직 없음)
+        "ai_players": ai_players, # 💡 [수정] 성격/이름이 포함된 AI 정보
         "messages": [
             {
                 'id': f"msg_system_0",
                 'sender': 'system', 
+                'sender_name': '시스템', # 💡 [추가]
                 'text': f"방이 생성되었습니다 (ID: {room_id}). 참가자를 기다립니다.",
                 'timestamp': datetime.now().isoformat()
             }
@@ -142,7 +174,8 @@ def create_room(data):
         "discussion_turns": 0, # 1차, 2차 구분용
         "ai_answers": [], # AI 답변 임시 저장소
         "votes": {},
-        "phases_config": PHASES
+        "phases_config": PHASES,
+        "available_names": available_names # 💡 [추가] 남은 닉네임 풀 저장
     }
     join_room(room_id)
     emit_room_state(room_id)
@@ -160,20 +193,31 @@ def join_room_event(data):
     if room['user_id'] is not None:
         emit('error', {'message': '방이 꽉 찼습니다.'})
         return
+        
+    # 💡 [수정] 참가자 닉네임 할당
+    if not room.get('available_names') or len(room['available_names']) == 0: # 혹시 모를 오류 방지
+        room['available_names'] = ANIMAL_NAMES[:]
+        
+    user_name = random.choice(room['available_names'])
+    room['available_names'].remove(user_name) # 중복 제거
 
     room['user_id'] = user_id
     room['user_sid'] = request.sid
+    room['user_name'] = user_name # 💡 [추가] 참가자 닉네임 저장
+    
     join_room(room_id)
     
     room['messages'].append({
         'id': f"msg_system_1",
         'sender': 'system', 
-        'text': f"참가자(시민)가 입장했습니다. 게임을 시작합니다.",
+        'sender_name': '시스템', # 💡 [추가]
+        'text': f"'{user_name}' 참가자(시민)가 입장했습니다. 게임을 시작합니다.",
         'timestamp': datetime.now().isoformat()
     })
     room['messages'].append({
         'id': f"msg_system_2",
         'sender': 'system', 
+        'sender_name': '시스템', # 💡 [추가]
         'text': f"--- {PHASES[room['phase']]}이 시작되었습니다. ---",
         'timestamp': datetime.now().isoformat()
     })
@@ -195,7 +239,8 @@ def handle_leave_room(data, is_disconnect=False):
         room['messages'].append({
             'id': f"msg_system_exit_op",
             'sender': 'system', 
-            'text': f"운영자(라이어)가 방을 나갔습니다. 게임이 종료됩니다.",
+            'sender_name': '시스템', # 💡 [추가]
+            'text': f"운영자('{room.get('operator_name')}')가 방을 나갔습니다. 게임이 종료됩니다.",
             'timestamp': datetime.now().isoformat()
         })
         emit_room_state(room_id)
@@ -205,12 +250,20 @@ def handle_leave_room(data, is_disconnect=False):
             
     # 참가자만 내보내기
     elif user_id == room['user_id']:
+        user_name = room.get('user_name', '참가자')
+        # 💡 [수정] 닉네임 반환 로직
+        if room.get('available_names') is not None and user_name in ANIMAL_NAMES:
+             room['available_names'].append(user_name) # 닉네임 반환
+
         room['user_id'] = None
         room['user_sid'] = None
+        room['user_name'] = None
+        
         room['messages'].append({
             'id': f"msg_system_exit_user",
             'sender': 'system', 
-            'text': f"참가자(시민)가 방을 나갔습니다.",
+            'sender_name': '시스템', # 💡 [추가]
+            'text': f"참가자('{user_name}')가 방을 나갔습니다.",
             'timestamp': datetime.now().isoformat()
         })
         if not is_disconnect:
@@ -230,15 +283,20 @@ def send_message(data):
     room = rooms[room_id]
     
     sender_type = 'unknown'
+    sender_name = 'Unknown' # 💡 [추가]
+    
     if user_id == room['operator_id']:
         sender_type = 'operator'
+        sender_name = room.get('operator_name', '운영자') # 💡 [추가]
     elif user_id == room['user_id']:
         sender_type = 'user'
+        sender_name = room.get('user_name', '참가자') # 💡 [추가]
 
     new_message = {
         'id': f"msg_{datetime.now().isoformat()}_{random.randint(1000, 9999)}",
         'sender': user_id,
         'sender_type': sender_type,
+        'sender_name': sender_name, # 💡 [추가]
         'text': text,
         'timestamp': datetime.now().isoformat()
     }
@@ -259,17 +317,18 @@ def send_message(data):
         emit_room_state(room_id) 
 
     elif current_turn == 'operator' and user_id == room['operator_id']:
-        # 1. 운영자(라이어) 메시지를 '진술' 객체로 만듦 (DB엔 아직 추가X)
+        # 1. 운영자(라이어) 메시지를 '진술' 객체로 만듦
         operator_statement = {
             'sender': room['operator_id'], 
             'sender_type': 'operator', 
+            'sender_name': room.get('operator_name', '운영자'), # 💡 [수정]
             'text': text 
         }
 
         # 2. AI 답변이 준비되었는지 확인
         if 'ai_answers' not in room or not room['ai_answers']:
             print(f"Warning: Operator sent message but AI answers are not ready in room {room_id}.")
-            room['messages'].append(new_message)
+            room['messages'].append(new_message) # 💡 [수정] new_message(sender_name 포함) 사용
             emit_room_state(room_id)
             return
 
@@ -284,6 +343,7 @@ def send_message(data):
                 'id': f"msg_{datetime.now().isoformat()}_{random.randint(1000, 9999)}",
                 'sender': stmt['sender'],
                 'sender_type': stmt['sender_type'],
+                'sender_name': stmt.get('sender_name', 'AI'), # 💡 [수정]
                 'text': stmt['text'],
                 'timestamp': datetime.now().isoformat()
             })
@@ -300,6 +360,7 @@ def send_message(data):
             room['messages'].append({
                 'id': f"msg_system_phase_{room['phase']}",
                 'sender': 'system', 
+                'sender_name': '시스템', # 💡 [추가]
                 'text': f"--- {next_phase_name}이 시작되었습니다. ---",
                 'timestamp': datetime.now().isoformat()
             })
@@ -316,6 +377,7 @@ def send_message(data):
             room['messages'].append({
                 'id': f"msg_system_vote",
                 'sender': 'system', 
+                'sender_name': '시스템', # 💡 [추가]
                 'text': f"--- 모든 토론이 종료되었습니다. 투표를 시작합니다. (투표 기능 미구현) ---",
                 'timestamp': datetime.now().isoformat()
             })
@@ -335,154 +397,157 @@ def async_generate_ai_answers(room_id, phase_name):
         socketio.emit('aiProcessing', {'status': 'end'}, to=room_id)
         return
 
-    try:
-        topic = room['topic']
-        citizen_word = room['citizen_word']
-        
-        # 💡 [수정] 5개가 아닌 최근 20개의 대화 기록을 전달하여 중복을 최대한 방지
-        chat_history = room['messages']
-        recent_chat_history_json = json.dumps(chat_history[-20:], ensure_ascii=False)
-        
-        phase_rules = "" 
-        
-        if '진술' in phase_name:
-            # 💡 [수정] 모호성 강화를 위해 6번 규칙(답변 형식) 수정
-            phase_rules = f"""
-            (역할: {phase_name})
-            게임 주제: {topic}
-            당신이 받은 단어: {citizen_word}
-
-            현재까지의 대화 내용 (이전 발언과 중복을 피하기 위해 참고하세요):
-            {recent_chat_history_json}
-
-            당신은 라이어 게임의 참가자이며, **제시어({citizen_word})를 알고 있는 일반 시민 역할**입니다.
-            당신의 목표는 라이어가 아님을 증명하고, 라이어를 찾아내는 것입니다. 지금은 '{phase_name}' 단계입니다.
-
-            💡 반드시 지켜야 할 핵심 규칙:
-            1. **제시어 직접 언급 금지:** 어떤 경우에도 "{citizen_word}"라는 단어를 직접 말하지 마세요.
-            2. **정답 확인 금지:** "정답이다", "맞다", "틀리다" 등 확정적인 발언은 절대 하지 마세요.
-            3. **💡 중요: 중복 절대 금지 (최우선 규칙):**
-               - **(이전 발언):** 위 '현재까지의 대화 내용'에 있는 힌트와 중복되는 내용은 절대 말하지 마세요.
-               - **(동시 발언):** 당신 외 3명의 AI도 지금 동시에 힌트를 생성합니다. 가장 뻔하고 직접적인 힌트(예: {citizen_word}가 과일이면 '빨갛다', '달다')는 다른 AI가 말할 확률이 높으니 **반드시 피하세요.**
-               - **(창의성):** 라이어가 바로 알기 어렵지만, 시민은 알 수 있는 **창의적이고 독특한 힌트**를 1개만 말하세요.
-            4. **힌트 방식 (참고):**
-               - 제시어와 **발음이 겹치거나 비슷한 단어** (예: '사과' -> '사과하세요')
-               - **의미적으로 은근히 연관된 비유나 말장난** (예: '사과' -> '뉴턴이 맞은 것')
-            5. **⚠️ 2차 진술 규칙:** 만약 지금이 '2차 진술'이라면, '1차 진술' 때 본인이나 타인이 했던 말과 **완전히 다른** 힌트를 말해야 합니다.
+    # 💡 [오류 수정] try...finally 구문으로 변경
+    # AI 응답 생성 중 오류가 발생하더라도, finally에서 'end' 신호를 보내
+    # 프론트엔드가 무한 로딩에 빠지는 것을 방지합니다.
+    try: 
+        try:
+            topic = room['topic']
+            citizen_word = room['citizen_word']
+            chat_history = room['messages']
             
-            6. **⚠️ 모호성 유지 및 표현 방식 (매우 중요):**
-               - 답변을 **매우 모호하게** 표현해야 합니다. 라이어가 정답을 유추하기 어렵게 만드세요.
-               - "**이것은... 입니다.**" 같은 **직접적인 정의 형식은 절대 사용하지 마세요.**
-               - 대신, **"...을 떠올리게 하네요.", "...와 관련이 있죠.", "...할 때 쓰기도 해요."** 와 같이 간접적이고 애매한 표현을 사용하세요.
-               - 답변은 반드시 1개의 문장으로 간결하게 끝나야 합니다.
+            # 💡 [추가] AI 프롬프트에 '닉네임 대조표' 추가
+            nickname_map = {
+                room['operator_id']: room.get('operator_name', '운영자'),
+                room['user_id']: room.get('user_name', '참가자'),
+            }
+            for ai in room['ai_players']:
+                nickname_map[ai['id']] = ai['name']
 
-            7. 이모티콘은 사용하지 마세요.
-            """
-        
-        elif '토론' in phase_name:
-            # 💡 [수정] '토론' 프롬프트에 JSON 읽는 법 명시
-            phase_rules = f"""
-            (역할: {phase_name})
-            게임 주제: {topic}
-            당신이 받은 단어: {citizen_word}
-            현재까지의 대화 내용 (참고용):
-            {recent_chat_history_json}
+            # 💡 [수정] 대화 기록에 닉네임 추가
+            recent_chat_history = []
+            for msg in chat_history[-20:]: # 20개로 늘림
+                sender_name = nickname_map.get(msg.get('sender'), msg.get('sender_name', 'Unknown'))
+                recent_chat_history.append({
+                    "sender_name": sender_name,
+                    "text": msg.get('text')
+                })
+            recent_chat_history_json = json.dumps(recent_chat_history, ensure_ascii=False)
             
-            당신은 제시어를 아는 '시민'입니다.
-            지금은 '{phase_name}' 단계입니다. 이 단계의 목표는 라이어를 찾는 것입니다.
-
-            **대화 기록(JSON) 읽는 법:**
-            - `sender_type: 'operator'`: 라이어 역할을 하는 **'운영자'**입니다.
-            - `sender_type: 'user'`: 당신과 같은 시민인 **'참가자'**입니다.
-            - `sender_type: 'ai'`: 당신의 동료 AI (ai_1, ai_2, ...)입니다.
-
-            💡 반드시 지켜야 할 핵심 규칙:
-            1. **'토론'의 목적:** '진술'과 다릅니다. 제시어({citizen_word})에 대해 **설명하지 마세요.**
-            2. **의심 발언:** 위 '대화 내용'을 **반드시** 읽고, `sender_type`이 'operator'인 **'운영자'**, 'user'인 **'참가자'**, 또는 다른 'AI'의 발언 중 가장 의심스러운 사람 1명을 지목하거나, 왜 의심스러운지 이유를 말하세요.
-            3. **제시어 언급 절대 금지:** 어떤 경우에도 "{citizen_word}"라는 단어를 직접 말하지 마세요.
-            4. **이모티콘 금지:** 이모티콘을 사용하지 마세요.
-            5. **⚠️ 답변 형식 강제:** 당신의 답변은 **반드시 1개의 문장**으로, 다른 사람을 의심하는 내용이어야 합니다.
+            phase_rules = "" 
             
-            (예시: "운영자님의 아까 발언이 좀 애매했던 것 같아요.")
-            (예시: "AI 2번 님이 제시어랑 좀 거리가 먼 이야기를 하신 것 같습니다.")
-            (예시: "저는 참가자(시민) 님이 가장 의심스럽습니다.")
-            (예시: "다들 잘 설명하셔서 아직 잘 모르겠습니다.")
+            if '진술' in phase_name:
+                phase_rules = f"""
+                (역할: {phase_name})
+                게임 주제: {topic}
+                당신이 받은 단어: {citizen_word}
+                최근 대화 내용(이전 진술과 중복을 피하기 위해 참고하세요):
+                {recent_chat_history_json}
 
-            이제, 당신의 토론 발언을 1개의 문장으로 생성하세요:
-            """
-        
-        ai_players = room['ai_players']
-        
-        def generate_answer(client, ai_id, full_prompt):
-            try:
-                response = client.chat.completions.create(
-                    model="gpt-4o-mini",
-                    messages=[{"role": "user", "content": full_prompt}],
-                    max_tokens=100
-                )
-                response_text = response.choices[0].message.content.strip()
-                return {
-                    'sender': ai_id,
-                    'sender_type': 'ai',
-                    'text': response_text
-                }
-            except Exception as e:
-                print(f"Error for AI {ai_id}: {e}")
-                return {
-                    'sender': ai_id,
-                    'sender_type': 'ai',
-                    'text': f"(AI {ai_id} 답변 생성 오류)"
-                }
-
-        # 4개의 AI 클라이언트로 동시에 답변 생성 요청
-        with concurrent.futures.ThreadPoolExecutor(max_workers=4) as executor:
-            futures = []
-            for i in range(len(ai_players)):
-                ai_player = ai_players[i]
-                personality = ai_player['personality']
+                당신은 라이어 게임의 참가자이며, **제시어({citizen_word})를 알고 있는 일반 시민 역할**입니다.
+                당신의 목표는 라이어가 아님을 증명하고, 라이어를 찾아내는 것입니다.
                 
-                # 💡 [추가] 성격을 포함한 최종 프롬프트 구성
-                full_prompt = f"""
-                당신은 라이어 게임에 참가한 AI 참가자입니다.
-                당신의 이름: {ai_player['name']}
-                당신의 성격: {personality}
-                
-                당신의 성격에 맞게 답변을 조절하세요. (예: 소심하면 '...같아요', 직설적이면 '확실합니다.')
-                
-                ---
-                
-                {phase_rules}
+                💡 핵심 규칙:
+                1. **제시어 직접 언급 금지:** "{citizen_word}" 단어를 절대 말하지 마세요.
+                2. **모호성 유지 (가장 중요):** 라이어가 유추하기 어렵도록, **"이것은... 입니다"** 같은 직접적인 정의 대신, **"...을(를) 떠올리게 하네요"** 또는 **"...와(과) 관련이 있죠"** 처럼 매우 간접적이고 모호한 방식으로 힌트를 주세요.
+                3. **중복 금지:** 다른 참가자(대화 내용 참고)가 이미 말한 힌트나, 1차 진술 때 자신이 했던 말과 겹치는 힌트는 절대 말하지 마세요.
+                4. **창의성:** 다른 AI들도 동시에 답변을 생성중입니다. 가장 뻔한 힌트(예: 사과 -> '빨갛다', '과일이다')는 반드시 피하고, 창의적인 힌트를 1개만 말하세요.
+                5. **답변 형식:** 이모티콘 없이, 당신의 성격에 맞는 1개의 문장으로 답변을 생성하세요.
                 """
-                
-                futures.append(
-                    executor.submit(generate_answer, clients[i], ai_player['id'], full_prompt)
-                )
             
-            results = [future.result() for future in concurrent.futures.as_completed(futures)]
-        
-        # AI 답변(dict 리스트)을 룸에 저장
-        room['ai_answers'] = results
+            elif '토론' in phase_name:
+                phase_rules = f"""
+                (역할: {phase_name})
+                게임 주제: {topic}
+                당신이 받은 단어: {citizen_word}
+                
+                💡 참가자 명단 (ID와 닉네임):
+                {json.dumps(nickname_map, ensure_ascii=False)}
 
-    except Exception as e:
-        print(f"Error during AI processing: {e}")
-        room['messages'].append({
-            'id': f"msg_system_ai_error",
-            'sender': 'system', 
-            'text': f"AI 응답 생성 중 오류가 발생했습니다: {e}",
-            'timestamp': datetime.now().isoformat()
-        })
-        emit_room_state(room_id) # 오류 상태 전파
-    
-    # 7. AI 응답 생성이 완료되었음을 알림
-    socketio.emit('aiProcessing', {'status': 'end'}, to=room_id)
+                💡 최근 대화 내용:
+                {recent_chat_history_json}
+                
+                당신은 제시어를 아는 '시민'입니다. 이 단계의 목표는 라이어를 찾는 것입니다.
+                대화 내용을 보고, 참가자 명단에서 **닉네임**을 사용해 가장 의심스러운 사람 1명을 지목하거나 이유를 말하세요.
+
+                💡 핵심 규칙:
+                1. **'토론'의 목적:** 제시어({citizen_word})를 설명하지 마세요.
+                2. **닉네임 사용:** ID(ai_1, user_id 등)가 아닌, **반드시 참가자 명단의 '닉네임'을 사용**하여 의심하세요.
+                3. **제시어 언급 금지:** "{citizen_word}" 단어를 절대 말하지 마세요.
+                4. **답변 형식:** 이모티콘 없이, 당신의 성격에 맞는 1개의 문장으로 답변을 생성하세요.
+                
+                (예시: "{nickname_map.get(room['operator_id'], '운영자')} 님의 아까 발언이 좀 애매했던 것 같아요.")
+                (예시: "{nickname_map.get(room['user_id'], '참가자')} 님이 제시어랑 좀 거리가 먼 이야기를 하신 것 같습니다.")
+                """
+            
+            ai_players = room['ai_players']
+            
+            # 💡 [수정] generate_answer가 ai_player 객체를 받도록 수정
+            def generate_answer(client, ai_player, full_prompt):
+                ai_id = ai_player['id']
+                ai_name = ai_player['name'] # 💡 [추가]
+                try:
+                    response = client.chat.completions.create(
+                        model="gpt-4o-mini",
+                        messages=[{"role": "user", "content": full_prompt}],
+                        max_tokens=100
+                    )
+                    response_text = response.choices[0].message.content.strip()
+                    return {
+                        'sender': ai_id,
+                        'sender_type': 'ai',
+                        'sender_name': ai_name, # 💡 [수정]
+                        'text': response_text
+                    }
+                except Exception as e:
+                    print(f"Error for AI {ai_id}: {e}")
+                    return {
+                        'sender': ai_id,
+                        'sender_type': 'ai',
+                        'sender_name': ai_name, # 💡 [수정]
+                        'text': f"(AI {ai_name} 답변 생성 오류)" # 💡 [수정]
+                    }
+
+            # 4개의 AI 클라이언트로 동시에 답변 생성 요청
+            with concurrent.futures.ThreadPoolExecutor(max_workers=4) as executor:
+                futures = []
+                for i in range(len(ai_players)):
+                    ai_player = ai_players[i]
+                    personality = ai_player['personality']
+                    
+                    full_prompt = f"""
+                    당신은 라이어 게임에 참가한 AI 참가자입니다.
+                    당신의 이름: {ai_player['name']}
+                    당신의 성격: {personality}
+                    
+                    당신의 성격에 맞게 답변을 조절하세요. (예: 소심하면 '...같아요', 직설적이면 '확실합니다.')
+                    
+                    ---
+                    
+                    {phase_rules}
+                    """
+                    
+                    futures.append(
+                        # 💡 [수정] ai_player 객체 전체 전달
+                        executor.submit(generate_answer, clients[i], ai_player, full_prompt)
+                    )
+                
+                results = [future.result() for future in concurrent.futures.as_completed(futures)]
+            
+            room['ai_answers'] = results
+
+        except Exception as e:
+            print(f"Error during AI processing: {e}")
+            room['messages'].append({
+                'id': f"msg_system_ai_error",
+                'sender': 'system', 
+                'sender_name': '시스템', # 💡 [추가]
+                'text': f"AI 응답 생성 중 오류가 발생했습니다: {e}",
+                'timestamp': datetime.now().isoformat()
+            })
+            emit_room_state(room_id) # 오류 상태 전파
+        
+    finally:
+        # 💡 [오류 수정]
+        # AI 응답이 성공하든, 위에서 'except'로 잡히든,
+        # 'finally'는 항상 실행되어 프론트엔드의 로딩 상태를 'end'로 변경합니다.
+        socketio.emit('aiProcessing', {'status': 'end'}, to=room_id)
 
 
 # ---------------------
 # Flask 서버 실행
 # ---------------------
 if __name__ == "__main__":
-    print("Starting Flask-SocketIO server...")
-    # 💡 [설정] 부스에서 사용할 것이므로 0.0.0.0으로 열어서
-    # 동일 네트워크의 다른 기기(플레이어 폰 등)가 접속할 수 있게 함
-    socketio.run(app, debug=True, host='0.0.0.0', port=5000)
+    print("Starting Flask-SocketIO server with eventlet...")
+    socketio.run(app, host='0.0.0.0', port=5000, debug=False, use_reloader=False)
 
