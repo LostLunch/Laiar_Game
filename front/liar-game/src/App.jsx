@@ -74,9 +74,9 @@ function LobbyScreen({ onJoin, onCreate }) {
 function RoomScreen({ roomState, onLeave, onSendMessage, isAILoading, isOperator }) {
     const { id: roomId, topic, liar_word, citizen_word, messages, phases_config, phase: phaseIndex } = roomState;
 
-    // 운영자인지 확인
-    const myWord = isOperator ? liar_word : citizen_word;
-    const myRole = isOperator ? "라이어" : "시민";
+    // 💡 [수정] 헤더에서 단어 표시 로직을 직접 처리하므로 아래 변수들 주석 처리
+    // const myWord = isOperator ? liar_word : citizen_word;
+    // const myRole = isOperator ? "라이어" : "시민";
     
     // 현재 페이즈 이름
     const currentPhaseName = phases_config[phaseIndex];
@@ -93,10 +93,24 @@ function RoomScreen({ roomState, onLeave, onSendMessage, isAILoading, isOperator
                     <span className="text-xs text-zinc-400">주제</span>
                     <span className="text-2xl font-bold">{topic}</span>
                 </div>
-                <div className="flex flex-col items-end">
-                    <span className="text-xs text-zinc-400">내 단어 ({myRole})</span>
-                    <span className="text-xl font-bold">{myWord}</span>
+                
+                {/* 💡 [수정] 운영자에게는 라이어 단어와 시민 제시어를 모두 표시 */}
+                <div className="flex flex-col items-end text-right">
+                    {isOperator ? (
+                        <>
+                            <span className="text-xs text-zinc-400">내 단어 (라이어)</span>
+                            <span className="text-lg font-bold text-red-400">{liar_word}</span>
+                            <span className="text-xs text-zinc-400 mt-1">참가자 제시어</span>
+                            <span className="text-base font-medium">{citizen_word}</span>
+                        </>
+                    ) : (
+                        <>
+                            <span className="text-xs text-zinc-400">내 단어 (시민)</span>
+                            <span className="text-xl font-bold">{citizen_word}</span>
+                        </>
+                    )}
                 </div>
+
                 <button
                     onClick={onLeave}
                     className="absolute top-4 right-4 bg-zinc-700 hover:bg-red-600 text-xs px-2 py-1 rounded-md transition-all"
@@ -246,15 +260,12 @@ function MessageBox({ onSendMessage, isAILoading, roomState, isOperator }) {
     
     const phaseName = roomState.phases_config[roomState.phase];
 
-    // 💡 [추가] '토론' 페이즈인지 확인
-    const isDiscussionPhase = ['1차 토론', '2차 토론'].includes(phaseName);
-    
-    // 💡 [수정] '진술' 페이즈인지 확인
-    const isTurnPhase = ['1차 진술', '2차 진술'].includes(phaseName);
+    // 💡 [수정] '진술'과 '토론' 모두 턴제 페이즈로 정의
+    const isTurnBasedPhase = ['1차 진술', '1차 토론', '2차 진술', '2차 토론'].includes(phaseName);
 
     let isMyTurn = false;
-    if (isTurnPhase) {
-        // '진술' 페이즈일 때만 턴을 검사
+    if (isTurnBasedPhase) {
+        // '진술' 또는 '토론' 페이즈일 때만 턴을 검사
         if (isOperator) {
             isMyTurn = roomState.turn === 'operator';
         } else {
@@ -263,24 +274,28 @@ function MessageBox({ onSendMessage, isAILoading, roomState, isOperator }) {
     }
     
     // 💡 [수정] isDisabled 로직
-    // AI 로딩 중이거나,
-    // (토론 페이즈도 아니고 AND 내 턴도 아니면) -> 비활성화
-    const isDisabled = isAILoading || (!isDiscussionPhase && !isMyTurn);
+    // 1. AI 로딩 중이거나
+    // 2. 내 턴이 아니면 (턴제 페이즈가 아닐 경우 isMyTurn은 false가 됨)
+    // -> 비활성화
+    const isDisabled = isAILoading || !isMyTurn;
 
     // 💡 [수정] 플레이스홀더 텍스트
     let placeholder = "메시지를 입력하세요...";
     if (isAILoading) {
         placeholder = "AI가 답변을 생성중입니다. 잠시만 기다려주세요...";
-    } else if (isDiscussionPhase) {
-        placeholder = "자유롭게 토론하세요..."; // 토론 페이즈
-    } else if (isTurnPhase) {
+    } else if (isTurnBasedPhase) {
         if (isMyTurn) {
-            placeholder = "내 턴: 진술을 입력하세요..."; // 내 턴 (진술)
+            // 💡 [추가] '토론' 페이즈일 때 플레이스홀더 변경
+            if (phaseName.includes('토론')) {
+                 placeholder = "내 턴: 의심가는 점을 말하세요...";
+            } else {
+                 placeholder = "내 턴: 진술을 입력하세요...";
+            }
         } else {
-            placeholder = "상대방의 턴을 기다리는 중..."; // 상대 턴 (진술)
+            placeholder = "상대방의 턴을 기다리는 중...";
         }
     } else {
-        placeholder = "투표 또는 다음 페이즈 대기 중..."; // 투표 또는 기타
+        placeholder = "투표 또는 다음 페이즈 대기 중..."; // '투표' 페이즈
     }
 
 
@@ -380,14 +395,26 @@ export default function App() {
     // --- 이벤트 핸들러 함수 ---
 
     const handleCreateRoom = useCallback(() => {
+        // 💡 [수정] socket이 연결되지 않았거나, isConnected 상태가 true가 아니면 실행 중지
+        if (!socket || !isConnected) {
+            console.error("Socket not connected yet");
+            setError("서버에 연결 중입니다. 잠시 후 다시 시도해주세요.");
+            return;
+        }
         setIsOperator(true); // 방을 만들면 운영자(라이어)
         socket.emit('create_room', {
             userId: MY_UNIQUE_USER_ID,
             isOperator: true
         });
-    }, []);
+    }, [isConnected]); // 💡 [수정] isConnected를 의존성 배열에 추가
 
     const handleJoinRoom = useCallback((roomId) => {
+        // 💡 [수정] socket이 연결되지 않았거나, isConnected 상태가 true가 아니면 실행 중지
+        if (!socket || !isConnected) {
+            console.error("Socket not connected yet");
+            setError("서버에 연결 중입니다. 잠시 후 다시 시도해주세요.");
+            return;
+        }
         if (!roomId || roomId.length !== 6) {
             setError("올바른 6자리 방 코드를 입력하세요.");
             return;
@@ -398,10 +425,12 @@ export default function App() {
             userId: MY_UNIQUE_USER_ID,
             isOperator: false
         });
-    }, []);
+    }, [isConnected]); // 💡 [수정] isConnected를 의존성 배열에 추가
 
     const handleLeaveRoom = useCallback(() => {
-        if (roomState) {
+        // 💡 [수정] roomState가 있을 때만 socket을 참조하므로, socket이 null일 가능성 희박
+        // 하지만 안전을 위해 socket null 체크 추가
+        if (roomState && socket) {
             socket.emit('leave_room', {
                 roomId: roomState.id,
                 userId: MY_UNIQUE_USER_ID
@@ -413,7 +442,9 @@ export default function App() {
     }, [roomState]);
 
     const handleSendMessage = useCallback((text) => {
-        if (roomState) {
+        // 💡 [수정] roomState가 있을 때만 socket을 참조하므로, socket이 null일 가능성 희박
+        // 하지만 안전을 위해 socket null 체크 추가
+        if (roomState && socket) {
             socket.emit('send_message', {
                 roomId: roomState.id,
                 userId: MY_UNIQUE_USER_ID,
